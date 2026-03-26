@@ -36,7 +36,7 @@ assert_ok() {
         echo "  PASS: $desc"
     else
         FAIL=$((FAIL + 1))
-        echo "  FAIL: $desc (exit code $?)"
+        echo "  FAIL: $desc (expected exit 0)"
     fi
 }
 
@@ -137,6 +137,66 @@ echo ""
 echo "=== init_state_dir ==="
 init_state_dir "$TEST_TMP/project"
 assert_ok "state dir exists" test -d "$TEST_TMP/project/.claude/state"
+
+echo ""
+echo "=== write_teammate_status ==="
+write_teammate_status "alice" "fixer" "working" "fixing bug" 3 50
+STATUS_FILE="$STATE_DIR/status-alice.json"
+assert_ok "status file created" test -f "$STATUS_FILE"
+assert_eq "teammate field" "alice" "$(jq -r '.teammate' "$STATUS_FILE" 2>/dev/null)"
+assert_eq "role field" "fixer" "$(jq -r '.role' "$STATUS_FILE" 2>/dev/null)"
+assert_eq "action field" "working" "$(jq -r '.action' "$STATUS_FILE" 2>/dev/null)"
+assert_eq "detail field" "fixing bug" "$(jq -r '.detail' "$STATUS_FILE" 2>/dev/null)"
+assert_eq "round field" "3" "$(jq -r '.round' "$STATUS_FILE" 2>/dev/null)"
+assert_eq "max_rounds field" "50" "$(jq -r '.max_rounds' "$STATUS_FILE" 2>/dev/null)"
+# Special chars in detail must not break JSON
+write_teammate_status "bob" "reviewer" "done" 'has "quotes" & <tags>' 1 10
+assert_ok "special chars: valid JSON" jq '.' "$STATE_DIR/status-bob.json"
+assert_eq "special chars: detail preserved" 'has "quotes" & <tags>' "$(jq -r '.detail' "$STATE_DIR/status-bob.json" 2>/dev/null)"
+
+echo ""
+echo "=== track_usage ==="
+USAGE_TEST="$STATE_DIR/track-usage-test.jsonl"
+# Override STATE_DIR temporarily so track_usage writes to a fresh file
+_ORIG_STATE_DIR="$STATE_DIR"
+STATE_DIR="$TEST_TMP/track-state"
+mkdir -p "$STATE_DIR"
+track_usage "quality-gate" "alice" "fixer" "pass" 5
+assert_ok "usage file created" test -f "$STATE_DIR/usage.jsonl"
+LAST=$(tail -1 "$STATE_DIR/usage.jsonl")
+assert_eq "hook field" "quality-gate" "$(echo "$LAST" | jq -r '.hook' 2>/dev/null)"
+assert_eq "teammate field" "alice" "$(echo "$LAST" | jq -r '.teammate' 2>/dev/null)"
+assert_eq "action field" "pass" "$(echo "$LAST" | jq -r '.action' 2>/dev/null)"
+assert_eq "duration field" "5" "$(echo "$LAST" | jq -r '.duration_s' 2>/dev/null)"
+track_usage "keep-working" "bob" "reviewer" "claim_task" 1
+assert_eq "second entry appended" "2" "$(wc -l < "$STATE_DIR/usage.jsonl")"
+STATE_DIR="$_ORIG_STATE_DIR"
+
+echo ""
+echo "=== detect_project (makefile type) ==="
+PROJ_TMP="$TEST_TMP/proj-make"
+mkdir -p "$PROJ_TMP"
+printf 'test:\n\techo ok\nlint:\n\techo lint\n' > "$PROJ_TMP/Makefile"
+_ORIG_DIR="$PWD"
+cd "$PROJ_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "makefile project type" "makefile" "$PROJECT_TYPE"
+assert_eq "makefile TEST_CMD" "make test" "$TEST_CMD"
+assert_eq "makefile LINT_CMD" "make lint" "$LINT_CMD"
+
+echo ""
+echo "=== detect_project (node type) ==="
+NODE_TMP="$TEST_TMP/proj-node"
+mkdir -p "$NODE_TMP"
+printf '{"name":"test","scripts":{"test":"jest","lint":"eslint .","typecheck":"tsc"}}\n' > "$NODE_TMP/package.json"
+cd "$NODE_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "node project type" "node" "$PROJECT_TYPE"
+assert_eq "node TEST_CMD" "npm test" "$TEST_CMD"
+assert_eq "node LINT_CMD" "npm run lint" "$LINT_CMD"
+assert_eq "node TYPE_CMD" "npm run typecheck" "$TYPE_CMD"
 
 echo ""
 echo "=========================================="

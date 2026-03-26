@@ -167,6 +167,7 @@ PROMPT
 
     elif [ -n "$goal" ] && [ "$goal" != "--once" ]; then
         # [Fix #5] 目标模式也统一用 gstack skill
+        goal=$(printf '%s' "$goal" | tr -d '`$')
         cat <<PROMPT
 你是 AI 全自动流水线的 Team Lead。目标：$goal
 
@@ -247,15 +248,23 @@ main() {
 
     check_prerequisites
 
-    log "模式：$([ "$goal" = "--continuous" ] && echo "持续运行" || ([ "$goal" = "--once" ] && echo "单轮" || echo "目标: $goal"))"
+    local mode_label
+    if [ "$goal" = "--continuous" ]; then
+        mode_label="持续运行"
+    elif [ "$goal" = "--once" ]; then
+        mode_label="单轮"
+    else
+        mode_label="目标: $goal"
+    fi
+    log "模式：$mode_label"
 
     PROMPT=$(build_prompt "$goal")
 
     log "启动 Team Lead..."
     echo ""
 
-    # [Fix #4] 用 --initial-prompt 而不是管道，确保交互模式正常
-    claude --initial-prompt "$PROMPT"
+    # Pass prompt as positional argument to start interactive session with initial context
+    claude "$PROMPT"
 
     log "流水线结束"
 }

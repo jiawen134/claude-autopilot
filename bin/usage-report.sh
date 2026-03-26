@@ -16,7 +16,11 @@ fi
 
 TOTAL_EVENTS=$(wc -l < "$USAGE_FILE")
 TODAY=$(date +%Y-%m-%d)
-TODAY_EVENTS=$(grep -c "$TODAY" "$USAGE_FILE" 2>/dev/null || echo 0)
+if command -v jq &>/dev/null; then
+    TODAY_EVENTS=$(jq -r 'select(.ts | startswith("'"$TODAY"'")) | .ts' "$USAGE_FILE" 2>/dev/null | wc -l || echo 0)
+else
+    TODAY_EVENTS=$(grep -c '"ts":"'"$TODAY"'' "$USAGE_FILE" 2>/dev/null || echo 0)
+fi
 
 echo "=========================================="
 echo "  Agent Teams 用量报告"
@@ -42,8 +46,8 @@ if command -v jq &>/dev/null; then
 
     # 按结果统计
     echo "--- 按结果 ---"
-    PASS=$(jq -r 'select(.outcome=="pass") | .outcome' "$USAGE_FILE" 2>/dev/null | wc -l)
-    FAIL=$(jq -r 'select(.outcome=="fail") | .outcome' "$USAGE_FILE" 2>/dev/null | wc -l)
+    PASS=$(jq -r 'select(.action=="pass") | .action' "$USAGE_FILE" 2>/dev/null | wc -l)
+    FAIL=$(jq -r 'select(.action=="fail") | .action' "$USAGE_FILE" 2>/dev/null | wc -l)
     echo "  通过: $PASS"
     echo "  打回: $FAIL"
     [ "$((PASS + FAIL))" -gt 0 ] && echo "  通过率: $(( PASS * 100 / (PASS + FAIL) ))%"
