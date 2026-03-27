@@ -323,6 +323,19 @@ cd "$RUBY_TMP" || exit 1
 detect_project
 cd "$_ORIG_DIR" || exit 1
 assert_eq "ruby project type" "ruby" "$PROJECT_TYPE"
+assert_contains "ruby TEST_CMD contains rspec" "rspec" "$TEST_CMD"
+assert_contains "ruby LINT_CMD contains rubocop" "rubocop" "$LINT_CMD"
+
+echo ""
+echo "=== detect_project (dotnet type) ==="
+DOTNET_TMP="$TEST_TMP/proj-dotnet"
+mkdir -p "$DOTNET_TMP"
+touch "$DOTNET_TMP/MyApp.sln"
+cd "$DOTNET_TMP" || exit 1
+detect_project
+cd "$_ORIG_DIR" || exit 1
+assert_eq "dotnet project type" "dotnet" "$PROJECT_TYPE"
+assert_eq "dotnet TEST_CMD" "dotnet test" "$TEST_CMD"
 
 echo ""
 echo "=== detect_project (swift type) ==="
@@ -367,6 +380,32 @@ AGENT_TEAMS_TEST_CMD="custom-test" AGENT_TEAMS_LINT_CMD="custom-lint" detect_pro
 cd "$_ORIG_DIR" || exit 1
 assert_eq "env override TEST_CMD" "custom-test" "$TEST_CMD"
 assert_eq "env override LINT_CMD" "custom-lint" "$LINT_CMD"
+
+echo ""
+echo "=== role_limit (all roles) ==="
+assert_eq "reviewer limit" "3" "$(role_limit "reviewer")"
+assert_eq "designer limit" "2" "$(role_limit "designer")"
+assert_eq "releaser limit" "2" "$(role_limit "releaser")"
+assert_eq "strategist limit" "2" "$(role_limit "strategist")"
+
+echo ""
+echo "=== detect_role (additional patterns) ==="
+assert_eq "ops pattern is releaser" "releaser" "$(detect_role "ops-team" "")"
+assert_eq "deploy pattern is releaser" "releaser" "$(detect_role "auto-deploy" "")"
+assert_eq "plan pattern is strategist" "strategist" "$(detect_role "plan-manager" "")"
+assert_eq "architect pattern is strategist" "strategist" "$(detect_role "chief-architect" "")"
+assert_eq "lead pattern is strategist" "strategist" "$(detect_role "team-lead" "")"
+
+echo ""
+echo "=== json_field (sed fallback) ==="
+_ORIG_PATH_JF="$PATH"
+PATH="/usr/bin:/bin"
+hash -r 2>/dev/null
+assert_eq "sed fallback basic field" "hello" "$(json_field '{"name":"hello"}' "name")"
+assert_eq "sed fallback missing returns default" "fallback" "$(json_field '{"name":"hello"}' "age" "fallback")"
+assert_eq "sed fallback empty json default" "default" "$(json_field '{}' "name" "default")"
+PATH="$_ORIG_PATH_JF"
+hash -r 2>/dev/null
 
 # ===== State Persistence Tests =====
 echo ""
