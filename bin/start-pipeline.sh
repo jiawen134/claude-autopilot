@@ -261,7 +261,8 @@ PROMPT
 
     elif [ -n "$goal" ] && [ "$goal" != "--once" ]; then
         # [Fix #5] 目标模式也统一用 gstack skill
-        goal=$(printf '%s' "$goal" | tr -d '`$')
+        # Sanitize shell metacharacters from user-provided goal string
+        goal=$(printf '%s' "$goal" | tr -d '`$;|&(){}!<>\\')
         cat <<PROMPT
 你是 AI 全自动流水线的 Team Lead。目标：$goal
 
