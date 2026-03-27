@@ -125,7 +125,7 @@ mkdir -p "$SAFE_PROJ/.claude/state"
 run_script "$SAFE_PROJ" "$QG" '{"teammate_name":"../../../tmp/pwned","team_name":"test","task_subject":"safe"}' >/dev/null 2>&1 || true
 # The status file should be in the state dir, not escaped
 TOTAL=$((TOTAL + 1))
-if ls /tmp/pwned*.json 2>/dev/null | grep -q .; then
+if compgen -G '/tmp/pwned*.json' > /dev/null 2>&1; then
     FAIL=$((FAIL + 1))
     echo "  FAIL: path traversal created file outside STATE_DIR"
 else
@@ -285,6 +285,7 @@ printf '#!/bin/sh\ntrue\n' > "$SP_NOJQ/fake-bin/claude"
 chmod +x "$SP_NOJQ/fake-bin/claude"
 SP_NOJQ_EXIT=0
 (
+  # shellcheck disable=SC2329 — invoked indirectly via export -f
   command() {
     if [ "${1:-}" = "-v" ] && [ "${2:-}" = "jq" ]; then return 1; fi
     builtin command "$@"

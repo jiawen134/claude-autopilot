@@ -9,7 +9,6 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # 加载被测模块
 TEAMMATE_NAME="test-runner"
-PROJECT_DIR="$PROJECT_DIR"
 source "$PROJECT_DIR/lib/common.sh"
 
 # ===== 测试框架 =====
@@ -199,7 +198,6 @@ assert_eq "special chars: detail preserved" 'has "quotes" & <tags>' "$(jq -r '.d
 
 echo ""
 echo "=== track_usage ==="
-USAGE_TEST="$STATE_DIR/track-usage-test.jsonl"
 # Override STATE_DIR temporarily so track_usage writes to a fresh file
 _ORIG_STATE_DIR="$STATE_DIR"
 STATE_DIR="$TEST_TMP/track-state"
@@ -221,9 +219,9 @@ PROJ_TMP="$TEST_TMP/proj-make"
 mkdir -p "$PROJ_TMP"
 printf 'test:\n\techo ok\nlint:\n\techo lint\n' > "$PROJ_TMP/Makefile"
 _ORIG_DIR="$PWD"
-cd "$PROJ_TMP"
+cd "$PROJ_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "makefile project type" "makefile" "$PROJECT_TYPE"
 assert_eq "makefile TEST_CMD" "make test" "$TEST_CMD"
 assert_eq "makefile LINT_CMD" "make lint" "$LINT_CMD"
@@ -233,9 +231,9 @@ echo "=== detect_project (node type) ==="
 NODE_TMP="$TEST_TMP/proj-node"
 mkdir -p "$NODE_TMP"
 printf '{"name":"test","scripts":{"test":"jest","lint":"eslint .","typecheck":"tsc"}}\n' > "$NODE_TMP/package.json"
-cd "$NODE_TMP"
+cd "$NODE_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "node project type" "node" "$PROJECT_TYPE"
 assert_eq "node TEST_CMD" "npm test" "$TEST_CMD"
 assert_eq "node LINT_CMD" "npm run lint" "$LINT_CMD"
@@ -246,9 +244,9 @@ echo "=== detect_project (rust type) ==="
 RUST_TMP="$TEST_TMP/proj-rust"
 mkdir -p "$RUST_TMP"
 touch "$RUST_TMP/Cargo.toml"
-cd "$RUST_TMP"
+cd "$RUST_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "rust project type" "rust" "$PROJECT_TYPE"
 assert_eq "rust TEST_CMD" "cargo test" "$TEST_CMD"
 assert_eq "rust LINT_CMD" "cargo clippy -- -D warnings" "$LINT_CMD"
@@ -258,9 +256,9 @@ echo "=== detect_project (go type) ==="
 GO_TMP="$TEST_TMP/proj-go"
 mkdir -p "$GO_TMP"
 touch "$GO_TMP/go.mod"
-cd "$GO_TMP"
+cd "$GO_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "go project type" "go" "$PROJECT_TYPE"
 assert_eq "go TEST_CMD" "go test ./..." "$TEST_CMD"
 
@@ -269,9 +267,9 @@ echo "=== detect_project (python type) ==="
 PY_TMP="$TEST_TMP/proj-python"
 mkdir -p "$PY_TMP"
 touch "$PY_TMP/pyproject.toml"
-cd "$PY_TMP"
+cd "$PY_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "python project type" "python" "$PROJECT_TYPE"
 assert_contains "python TEST_CMD contains pytest" "pytest" "$TEST_CMD"
 
@@ -280,9 +278,9 @@ echo "=== detect_project (java-maven type) ==="
 MVN_TMP="$TEST_TMP/proj-maven"
 mkdir -p "$MVN_TMP"
 touch "$MVN_TMP/pom.xml"
-cd "$MVN_TMP"
+cd "$MVN_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "java-maven project type" "java-maven" "$PROJECT_TYPE"
 assert_contains "java-maven TEST_CMD contains mvn" "mvn" "$TEST_CMD"
 
@@ -291,9 +289,9 @@ echo "=== detect_project (java-gradle type) ==="
 GRADLE_TMP="$TEST_TMP/proj-gradle"
 mkdir -p "$GRADLE_TMP"
 touch "$GRADLE_TMP/build.gradle"
-cd "$GRADLE_TMP"
+cd "$GRADLE_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "java-gradle project type" "java-gradle" "$PROJECT_TYPE"
 assert_contains "java-gradle TEST_CMD contains gradle" "gradle" "$TEST_CMD"
 
@@ -303,9 +301,9 @@ PHP_TMP="$TEST_TMP/proj-php"
 mkdir -p "$PHP_TMP/vendor/bin"
 touch "$PHP_TMP/composer.json"
 touch "$PHP_TMP/vendor/bin/phpunit"
-cd "$PHP_TMP"
+cd "$PHP_TMP" || exit 1
 detect_project
-cd "$_ORIG_DIR"
+cd "$_ORIG_DIR" || exit 1
 assert_eq "php project type" "php" "$PROJECT_TYPE"
 assert_contains "php TEST_CMD contains phpunit" "phpunit" "$TEST_CMD"
 

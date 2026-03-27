@@ -587,6 +587,6 @@ is_shutdown() {
 write_shutdown_sentinel() {
     local team="${1:-default}"
     [ -n "${STATE_DIR:-}" ] || return 1
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${STATE_DIR}/shutdown-${team}"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "${STATE_DIR}/shutdown-${team}"
     log_info "Shutdown sentinel written for team: $team"
 }
