@@ -178,6 +178,34 @@ KW_ACTIVE_EXIT=0
  echo '{"teammate_name":"grace","team_name":"kwactive","teammate_role":"fixer"}' | bash "$KW") >/dev/null 2>&1 || KW_ACTIVE_EXIT=$?
 assert_eq "exits 2 when fixer has rounds remaining" "2" "$KW_ACTIVE_EXIT"
 
+# Test: keep-working exits 0 (idle_done) after IDLE_THRESHOLD rounds with no tasks
+KW_IDLE_PROJ="$TEST_TMP/kw-idle"
+mkdir -p "$KW_IDLE_PROJ/.claude/state"
+# Set idle counter to threshold-1, next invocation should trigger idle_done
+echo "2" > "$KW_IDLE_PROJ/.claude/state/idle-kwidle-idlebot"
+KW_IDLE_EXIT=0
+(export CLAUDE_PROJECT_DIR="$KW_IDLE_PROJ" AI_PIPELINE_MAX_ROUNDS=50 AI_PIPELINE_IDLE_THRESHOLD=3; \
+ echo '{"teammate_name":"idlebot","team_name":"kwidle","teammate_role":"fixer"}' | bash "$KW") >/dev/null 2>&1 || KW_IDLE_EXIT=$?
+assert_eq "exits 0 (idle_done) after idle threshold" "0" "$KW_IDLE_EXIT"
+
+# Test: keep-working exits 0 when shutdown sentinel exists
+KW_SHUT_PROJ="$TEST_TMP/kw-shutdown"
+mkdir -p "$KW_SHUT_PROJ/.claude/state"
+echo "2026-01-01T00:00:00Z" > "$KW_SHUT_PROJ/.claude/state/shutdown-kwshut"
+KW_SHUT_EXIT=0
+(export CLAUDE_PROJECT_DIR="$KW_SHUT_PROJ" AI_PIPELINE_MAX_ROUNDS=50; \
+ echo '{"teammate_name":"hal","team_name":"kwshut","teammate_role":"fixer"}' | bash "$KW") >/dev/null 2>&1 || KW_SHUT_EXIT=$?
+assert_eq "exits 0 when shutdown sentinel exists" "0" "$KW_SHUT_EXIT"
+
+# Test: quality-gate exits 0 when shutdown sentinel exists
+QG_SHUT_PROJ="$TEST_TMP/qg-shutdown"
+mkdir -p "$QG_SHUT_PROJ/.claude/state"
+printf 'test:\n\t@exit 1\n' > "$QG_SHUT_PROJ/Makefile"
+echo "2026-01-01T00:00:00Z" > "$QG_SHUT_PROJ/.claude/state/shutdown-qgshut"
+QG_SHUT_EXIT=0
+run_script "$QG_SHUT_PROJ" "$QG" '{"teammate_name":"hal","team_name":"qgshut","task_subject":"test"}' >/dev/null 2>&1 || QG_SHUT_EXIT=$?
+assert_eq "quality-gate exits 0 when shutdown sentinel exists" "0" "$QG_SHUT_EXIT"
+
 # ===== usage-report.sh =====
 echo ""
 echo "=== usage-report.sh ==="

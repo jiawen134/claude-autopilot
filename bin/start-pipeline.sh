@@ -57,6 +57,58 @@ check_prerequisites() {
     log "${GREEN}前置检查通过${NC}"
 }
 
+# ============ 生命周期 & 通信规则（通用，追加到所有模式 prompt 后）============
+_lifecycle_rules() {
+    cat <<'LIFECYCLE'
+
+## 生命周期管理
+
+### 建队（第一步，在前置步骤中执行）
+在创建任何 Teammate 之前，先调用 TeamCreate（team_name 用项目目录名，如 "my-app"）。
+创建 Teammate 时传 team_name 参数，让它们自动加入团队。
+
+### 通信规则（SendMessage）
+Teammate 之间用 SendMessage 直接对话，不要只靠 Task 传话：
+- **reviewer → fixer**：审查发现问题，直接 SendMessage 告知（附文件名+行号+修复建议）
+- **discoverer → fixer**：P0 问题直接通知 fixer 优先处理
+- **Lead → 全体**：重要变更用 broadcast（to: "*"）通知所有 Teammate
+- **strategist → Lead**：架构方案就绪时发给 Lead 审批
+- **Lead → teammate**：用 SendMessage 分配任务、调整优先级、唤醒空闲 Teammate
+- Teammate 空闲（idle）是正常的——Lead 随时可以 SendMessage 唤醒并分配新工作
+- 每个 Teammate 读 ~/.claude/teams/{team-name}/config.json 发现队友名称，用 name（不是 agentId）通信
+- SendMessage 带 summary 字段（5-10 字预览）：SendMessage({ to: "fixer", summary: "XSS in login", message: "..." })
+- 消息自动投递，不需要轮询 inbox——队友的消息会自动出现在你的对话里
+- Peer DM 可见性：teammate 之间 DM 时，idle 通知会包含摘要，Lead 不用回复这些摘要
+- **禁止**发结构化 JSON 状态消息（如 {type:"idle"} 或 {type:"task_completed"}），用纯文本 + TaskUpdate
+
+### Task metadata
+创建 Task 时用 metadata 存结构化信息，方便排序和筛选：
+  metadata: { "priority": "P0", "type": "security", "found_by": "discoverer" }
+优先级：P0（崩溃/安全）> P1（功能）> P2（样式/性能）> P3（优化）
+类型：bug / feature / security / perf / design / docs
+
+### Task 工作流
+- 完成一个 Task 后**立即** TaskList 查找下一个可用任务
+- 优先认领 ID 最小的未分配、未阻塞任务（低 ID 先，因为早期任务常是后续任务的前置）
+- 创建 Task 时设 blockedBy 依赖（如修复 blockedBy 发现，审查 blockedBy 修复）
+- 如果所有可用 Task 都被阻塞，通知 Lead 或帮忙解除阻塞
+
+### Lead 监控工具
+- TaskOutput — 查看 Teammate 后台任务输出，排查卡住的情况
+- TaskStop — 中止卡住的 Teammate 任务
+- TaskList + TaskGet — 实时查看所有任务状态和详情
+
+### 优雅关闭
+当所有目标完成或达到安全阀上限时：
+1. Lead 向全体发 shutdown：SendMessage({ to: "*", message: { type: "shutdown_request", reason: "pipeline complete" } })
+2. 等待每个 Teammate 回复 shutdown_response（approve: true）
+3. 写哨兵文件：运行 touch .claude/state/shutdown-{team_name}（让 Hook 也停止）
+4. 调用 TeamDelete 清理团队目录（~/.claude/teams/ 和 ~/.claude/tasks/）
+
+开始！
+LIFECYCLE
+}
+
 # ============ 构建启动 Prompt ============
 build_prompt() {
     local goal="${1:-}"
@@ -68,8 +120,9 @@ build_prompt() {
 
 前置：
 1. 运行 /careful 启用安全护栏
-2. 检查 .claude/state/progress.log — 如果存在，读取最近进度（续接上次流水线）
-3. 检查 Task 列表 — 如果有未完成任务，优先分配给对应角色
+2. 调用 TeamCreate 建队（team_name 用项目目录名）
+3. 检查 .claude/state/progress.log — 如果存在，读取最近进度（续接上次流水线）
+4. 检查 Task 列表 — 如果有未完成任务，优先分配给对应角色
 
 ## Context 管理（关键！）
 
@@ -77,11 +130,39 @@ Agent 是无状态的。所有进度写入 .claude/state/ 目录：
 - progress.log — 每个角色完成一轮循环后写入
 - discoveries.jsonl — discoverer 发现的问题
 - commits.log — 每次通过 quality gate 后记录
+- shutdown-{team} — 关闭哨兵文件，Hook 检测到后停止驱动
 
 当 Teammate 的角色轮次用完时，hook 会自动重置计数并继续（不会停止）。
-每个 Teammate 重启后应该：先读 progress.log + Task 列表，再继续工作。
+每个 Teammate 重启后应该：先读 requirements.md + plan.md + progress.log + Task 列表，再继续工作。
 
-## 启动团队（6 个 Teammate，全部使用 Sonnet 模型）
+如果 .claude/state/requirements.md 存在，所有 Teammate 必须先读它理解需求背景。
+如果 .claude/state/plan.md 存在，fixer 按计划实现，reviewer 按计划验收。
+
+## Teammate 模型 & subagent_type 选择
+所有角色都用 subagent_type: "general-purpose"（需要 Edit/Write/Bash）。
+Read-only agents（Explore, Plan）不能做实现工作，不要用于任何角色。
+
+模型按角色分配（用 Agent tool 的 model 参数）：
+- **strategist** → model: "opus"（架构决策、产品方向需要最深推理）
+- **reviewer** → model: "opus"（Staff Engineer 级别审查需要高判断力）
+- **fixer** → model: "opus"（代码质量决定返工次数，Opus 一次写对减少循环）
+- **discoverer** → model: "sonnet"（QA 测试和 bug 发现）
+- **designer** → model: "sonnet"（视觉审查）
+- **releaser** → model: "sonnet"（发布流程）
+
+原则：写代码 + 审代码 + 定方向用 Opus（质量优先），发现 + 设计 + 发布用 Sonnet。
+
+## Token 优化规则
+
+### reviewer 增量审查
+reviewer 每次优先审查最新的 `git diff`，不要重新审查整个代码库。
+对应命令：`git diff HEAD~1` 或 `git diff $(git merge-base HEAD main)..HEAD`
+
+### reviewer 增量审查
+reviewer 每次只审查最新的 `git diff`，不要重新审查整个代码库。
+对应命令：`git diff HEAD~1` 或 `git diff $(git merge-base HEAD main)..HEAD`
+
+## 启动团队（6 个 Teammate，按角色分配模型）
 
 ### Teammate 1: QA 探测者 (discoverer)
 角色：流水线的"输入端"——持续发现问题，喂任务给其他人。
@@ -169,7 +250,7 @@ Agent 是无状态的。所有进度写入 .claude/state/ 目录：
 ## 工作规则
 
 1. 使用 Delegate Mode（Shift+Tab）——你自己不写代码，只协调
-2. 全部 6 个 Teammate 使用 Sonnet 模型并行工作
+2. strategist + reviewer + fixer 用 Opus（质量优先），其余 3 个用 Sonnet（执行优先）
 3. 你（Lead）负责：初始运行 /careful, /setup-browser-cookies, /setup-deploy
 4. 持续循环：发现 → 修复 → 审查 → 设计审查 → 发布 → 监控 → 再发现...
 5. TaskCompleted Hook 自动验证测试通过才允许标记完成
@@ -177,8 +258,9 @@ Agent 是无状态的。所有进度写入 .claude/state/ 目录：
 7. **每个 Teammate 每次修复后立即 git commit**（粒度越小越安全，像 Peter 一样）
 8. **Task 是唯一的真相来源**——不要靠 context 记忆，所有进度写 Task
 9. **Hook 输出只看 1 行摘要**——不要展开详情，节省 context
-
-开始吧！
+10. **用 SendMessage 直接通信**——reviewer→fixer 直接说"这行有 bug"，不用只建 Task 转述
+11. **Task 用 metadata 标优先级**——创建 Task 时设 metadata: {priority:"P0",type:"bug"}
+12. **完成后优雅关闭**——发 shutdown_request → 等 response → 哨兵文件 → TeamDelete
 PROMPT
 
     elif [ -n "$goal" ] && [ "$goal" != "--once" ]; then
@@ -187,28 +269,30 @@ PROMPT
         cat <<PROMPT
 你是 AI 全自动流水线的 Team Lead。目标：$goal
 
-前置：运行 /careful 启用安全护栏。
+前置：
+1. 运行 /careful 启用安全护栏
+2. 调用 TeamCreate 建队（team_name 用项目目录名）
 
-## 启动团队（4 个 Teammate，Sonnet 模型）
+## 启动团队（4 个 Teammate，按角色分配模型）
 
-### Teammate 1: 架构师 (strategist)
+### Teammate 1: 架构师 (strategist) — model: opus
 - 运行 /office-hours 梳理需求
 - 运行 /plan-eng-review 设计架构
 - 将实现计划拆分为可执行的 Tasks
 
-### Teammate 2: 开发者 (fixer)
+### Teammate 2: 开发者 (fixer) — model: opus
 - 认领 Tasks，写代码实现
 - 每个功能点独立 commit
 - 用 /investigate 排查问题
 - 用 /browse 验证效果
 
-### Teammate 3: 质量官 (reviewer)
+### Teammate 3: 质量官 (reviewer) — model: opus
 - /review 审查每个提交
 - /cso 安全扫描
 - /qa 浏览器端到端测试
 - 发现问题创建新 Task
 
-### Teammate 4: 发布者 (releaser)
+### Teammate 4: 发布者 (releaser) — model: sonnet
 - 所有 Tasks 完成后 /document-release
 - /ship 创建 PR
 - /land-and-deploy 部署
@@ -218,8 +302,8 @@ PROMPT
 - 使用 Delegate Mode
 - 任务设依赖：架构 → 开发 → 审查 → 发布
 - 所有提交必须通过测试
-
-开始！
+- 用 SendMessage 直接通信——reviewer→fixer 直接说问题，不只建 Task
+- Task 用 metadata 标优先级——metadata: {priority:"P0",type:"bug"}
 PROMPT
 
     else
@@ -227,28 +311,33 @@ PROMPT
         cat <<'PROMPT'
 你是 AI 全自动流水线的 Team Lead。跑一轮完整的 发现→修复→验证 循环。
 
-前置：运行 /careful 启用安全护栏。
+前置：
+1. 运行 /careful 启用安全护栏
+2. 调用 TeamCreate 建队（team_name 用项目目录名）
 
-创建 3 个 Teammate（Sonnet 模型）：
+创建 3 个 Teammate（按角色分配模型）：
 
-### Teammate 1: 发现者 (discoverer)
+### Teammate 1: 发现者 (discoverer) — model: sonnet
 - /qa 浏览器系统化测试
 - /investigate 根因分析
 - 把每个问题创建为 Tasks
 
-### Teammate 2: 修复者 (fixer)
+### Teammate 2: 修复者 (fixer) — model: opus
 - 认领 Tasks，修复代码
 - 每个问题独立 commit
 - /browse 验证修复效果
 
-### Teammate 3: 审查者 (reviewer)
+### Teammate 3: 审查者 (reviewer) — model: opus
 - /review 代码审查
 - /cso 安全检查
 - 确认后 /document-release 更新文档
 
-使用 Delegate Mode。开始！
+使用 Delegate Mode。
 PROMPT
     fi
+
+    # 追加通用生命周期 & 通信规则（所有模式共享）
+    _lifecycle_rules
 }
 
 # ============ 主程序 ============
@@ -279,8 +368,32 @@ main() {
     log "启动 Team Lead..."
     echo ""
 
-    # Pass prompt with --max-turns to prevent context exhaustion
-    claude --max-turns 50 "$PROMPT"
+    if [ "$goal" = "--continuous" ]; then
+        # Continuous mode: outer loop restarts Lead when --max-turns exhausted
+        # Teammates keep running (driven by TeammateIdle hook) across Lead restarts
+        # All state is on disk (.claude/state/), so new Lead picks up where old one left off
+        local lead_cycle=0
+        local max_lead_cycles="${AI_PIPELINE_MAX_LEAD_CYCLES:-10}"
+        while [ "$lead_cycle" -lt "$max_lead_cycles" ]; do
+            lead_cycle=$((lead_cycle + 1))
+            log "Lead cycle ${lead_cycle}/${max_lead_cycles}"
+
+            # Check shutdown sentinel before starting a new cycle
+            if [ -f ".claude/state/shutdown-$(basename "$PWD")" ]; then
+                log "Shutdown sentinel detected. Stopping Lead loop."
+                break
+            fi
+
+            claude --max-turns 50 "$PROMPT" || true
+
+            log "Lead session ended. Teammates continue via hooks."
+            sleep 2
+        done
+        log "Lead loop 完成 (${lead_cycle} cycles)"
+    else
+        # Single-run modes: one Lead session
+        claude --max-turns 50 "$PROMPT"
+    fi
 
     log "流水线结束"
 }

@@ -567,3 +567,20 @@ reset_role_cycle() {
     write_progress "$role" "$round" "$reason — $(state_summary)"
     rm -f "$round_file"
 }
+
+# ===== Shutdown sentinel =====
+# Lead writes this file to signal all hooks to stop gracefully.
+# Usage: is_shutdown "$team_name" → returns 0 if shutdown requested
+# Usage: write_shutdown_sentinel "$team_name"
+
+is_shutdown() {
+    local team="${1:-default}"
+    [ -f "${STATE_DIR}/shutdown-${team}" ]
+}
+
+write_shutdown_sentinel() {
+    local team="${1:-default}"
+    [ -n "${STATE_DIR:-}" ] || return 1
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${STATE_DIR}/shutdown-${team}"
+    log_info "Shutdown sentinel written for team: $team"
+}

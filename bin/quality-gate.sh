@@ -31,6 +31,12 @@ TEAM_NAME="${TEAM_NAME//[^a-zA-Z0-9_-]/}"
 _LOG_PREFIX="$TEAMMATE_NAME"
 ROLE=$(detect_role "$TEAMMATE_NAME" "$TEAMMATE_ROLE")
 
+# ===== Shutdown check =====
+if is_shutdown "$TEAM_NAME"; then
+    log_info "Shutdown sentinel detected. Passing through."
+    exit 0
+fi
+
 # ===== 重试计数 =====
 if command -v sha256sum &>/dev/null; then
     TASK_HASH=$(echo "${TEAM_NAME}:${TASK_SUBJECT}" | sha256sum | cut -c1-16)

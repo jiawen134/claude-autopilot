@@ -29,6 +29,12 @@ TEAMMATE_NAME="${TEAMMATE_NAME//[^a-zA-Z0-9_-]/}"
 TEAM_NAME="${TEAM_NAME//[^a-zA-Z0-9_-]/}"
 _LOG_PREFIX="$TEAMMATE_NAME"
 
+# ===== Shutdown check =====
+if is_shutdown "$TEAM_NAME"; then
+    log_info "Shutdown sentinel detected for team '$TEAM_NAME'. Stopping."
+    exit 0
+fi
+
 # ===== 轮次计数 =====
 ROUND_FILE="${STATE_DIR}/round-${TEAM_NAME}-${TEAMMATE_NAME}"
 LOCK_FILE="${STATE_DIR}/lock-round-${TEAM_NAME}-${TEAMMATE_NAME}"
@@ -56,6 +62,8 @@ fi
 REMAINING=$((PENDING + IN_PROGRESS))
 
 if [ "$REMAINING" -gt 0 ]; then
+    # 有任务 → 重置空闲计数器
+    rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
     write_teammate_status "$TEAMMATE_NAME" "$ROLE" "claiming_task" "${PENDING}p+${IN_PROGRESS}ip" "$CURRENT_ROUND" "$MAX_ROUNDS"
     log_info "[${ROLE}:R${CURRENT_ROUND}] ${PENDING}p+${IN_PROGRESS}ip tasks. Claiming next."
     track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "claim_task" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
@@ -73,6 +81,7 @@ if [ -n "${TEST_CMD:-}" ]; then
     TEST_OUTPUT=$(cat "$_test_outfile" 2>/dev/null)
     rm -f "$_test_outfile"
     if [ "$TEST_EXIT" -ne 0 ]; then
+        rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
         write_teammate_status "$TEAMMATE_NAME" "$ROLE" "test_failed" "exit=$TEST_EXIT" "$CURRENT_ROUND" "$MAX_ROUNDS"
         FC=$(echo "$TEST_OUTPUT" | grep -ciE "FAIL|failed|error|panic" || echo "?")
         FIRST_ERR=$(echo "$TEST_OUTPUT" | grep -m1 -iE "FAIL|ERROR|panic" || echo "unknown")
@@ -97,6 +106,25 @@ if [ -n "${LINT_CMD:-}" ]; then
         track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "lint_fail" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
         exit 2
     fi
+fi
+
+# ===== 第2.5层：完成检测 =====
+# 没有待办任务 + 测试通过 + lint 通过 = 可能已经做完了
+# 连续 N 轮都是这个状态 → 建议停止（而不是无意义地继续轮转 skill）
+IDLE_FILE="${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}"
+IDLE_LOCK="${STATE_DIR}/lock-idle-${TEAM_NAME}-${TEAMMATE_NAME}"
+IDLE_THRESHOLD="${AI_PIPELINE_IDLE_THRESHOLD:-3}"
+
+IDLE_COUNT=$(locked_increment "$IDLE_FILE" "$IDLE_LOCK")
+
+if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
+    # 连续 N 轮无事可做，通知 Lead 并停止
+    write_teammate_status "$TEAMMATE_NAME" "$ROLE" "idle_done" "no tasks for ${IDLE_COUNT} rounds, all green" "$CURRENT_ROUND" "$MAX_ROUNDS"
+    log_info "[${ROLE}:R${CURRENT_ROUND}] IDLE_DONE: no tasks + tests pass for ${IDLE_COUNT} rounds. Stopping."
+    write_progress "$ROLE" "$CURRENT_ROUND" "idle_done — no work for ${IDLE_COUNT} rounds"
+    track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "idle_done" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND,\"idle\":$IDLE_COUNT}"
+    rm -f "$IDLE_FILE"
+    exit 0
 fi
 
 # ===== 第3层：按角色轮转 =====

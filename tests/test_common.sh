@@ -407,6 +407,61 @@ else
     echo "FAIL"; FAIL=$((FAIL+1))
 fi
 
+# ===== Shutdown Sentinel Tests =====
+echo ""
+echo "=== Shutdown Sentinel ==="
+
+# Test is_shutdown returns false when no sentinel
+TOTAL=$((TOTAL+1))
+echo -n "is_shutdown returns false when no sentinel... "
+rm -f "$STATE_DIR/shutdown-testteam"
+if ! is_shutdown "testteam"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (should return false)"; FAIL=$((FAIL+1))
+fi
+
+# Test write_shutdown_sentinel creates file
+TOTAL=$((TOTAL+1))
+echo -n "write_shutdown_sentinel creates file... "
+write_shutdown_sentinel "testteam" 2>/dev/null
+if [ -f "$STATE_DIR/shutdown-testteam" ]; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+fi
+
+# Test is_shutdown returns true after write
+TOTAL=$((TOTAL+1))
+echo -n "is_shutdown returns true after write... "
+if is_shutdown "testteam"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+fi
+
+# Test sentinel contains timestamp
+TOTAL=$((TOTAL+1))
+echo -n "sentinel file contains timestamp... "
+SENTINEL_CONTENT=$(cat "$STATE_DIR/shutdown-testteam" 2>/dev/null)
+if echo "$SENTINEL_CONTENT" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (got: $SENTINEL_CONTENT)"; FAIL=$((FAIL+1))
+fi
+
+# Test default team name
+TOTAL=$((TOTAL+1))
+echo -n "is_shutdown uses 'default' team... "
+rm -f "$STATE_DIR/shutdown-default"
+echo "ts" > "$STATE_DIR/shutdown-default"
+if is_shutdown; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+fi
+rm -f "$STATE_DIR/shutdown-default" "$STATE_DIR/shutdown-testteam"
+
 echo ""
 echo "=========================================="
 echo "  Results: $PASS passed, $FAIL failed, $TOTAL total"

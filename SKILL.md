@@ -183,39 +183,134 @@ line-length = 120
 
 安装完毕后告知用户已配置完成。
 
-## 第三步：选择运行模式
+## 第三步：需求理解 & 智能路由
 
-用 AskUserQuestion 询问用户：
+### 3.1 需求输入
+
+用 AskUserQuestion 问用户：
 
 ```
-Agent Teams 已配置完毕。选择运行模式：
+Agent Teams 已配置完毕。请描述你的需求：
 
-1. 🔍 单轮扫描 — 3 个 Teammate（发现→修复→审查），跑一轮就停
-2. 🎯 目标驱动 — 4 个 Teammate，给定一个目标让 AI 团队实现
-3. 🔄 持续运行 — 6 个 Teammate，Peter Steinberger 模式（持续循环）
-4. ⚙️ 只安装不运行 — 配置好后手动启动
-
-选哪个？（1/2/3/4）
+- 直接说目标（如"添加用户注册功能"）
+- 给需求文档路径（如"看 docs/PRD.md"）
+- 粘贴需求文档内容
+- 说"全面扫描"让团队自己发现问题
+- 或输入数字选手动模式：1=单轮扫描 2=持续运行 3=只安装
 ```
 
-### 模式 1：单轮扫描
+**如果用户选了数字**：按对应模式执行（1→`--once`, 2→`--continuous`, 3→只安装），跳过后续步骤。
+
+**如果用户给了文件路径**：用 Read 工具读取文件内容，作为需求输入。
+
+**如果用户粘贴了大段文本/需求文档**：直接作为需求输入。
+
+**如果用户说了一句话需求**：进入需求澄清（3.2）。
+
+### 3.2 需求澄清（PM 模式）
+
+作为产品经理，理解用户的真实意图。**不限轮数，问到清楚为止。**
+
+**判断标准——什么叫"清楚"**：
+能回答以下 5 个问题就算清楚，缺哪个问哪个：
+1. **做什么**：具体要实现/修复/改进什么？
+2. **为什么**：解决什么问题？给谁用？
+3. **怎么验收**：用户怎么知道做完了？（可演示的行为、通过的测试）
+4. **边界**：不做什么？有什么限制？（技术栈、不能动的模块、性能要求）
+5. **参考**：有没有设计稿、API 文档、竞品参考？
+
+**追问策略**：
+- 每次只问 1-2 个最关键的问题，不要一口气问 5 个
+- 如果用户说"你看着办"、"帮我分析"，用 Explore agent 快速扫描代码库后自行判断
+- 如果用户给了需求文档，从文档中提取答案，只追问文档里没写清楚的
+- bug 类需求通常只需确认复现步骤，不用问太多
+
+### 3.3 需求持久化
+
+需求澄清完成后，将完整需求写入磁盘，确保所有 Teammate 都能读到：
+
 ```bash
-./start-pipeline.sh
+mkdir -p .claude/state
+# 写入 requirements.md，包含：
+# - 原始需求描述
+# - 澄清后的完整需求
+# - 验收标准
+# - 边界和限制
+# - 参考资料链接
 ```
 
-### 模式 2：目标驱动
-再次 AskUserQuestion 询问目标，然后：
-```bash
-./start-pipeline.sh "用户输入的目标"
+Write 工具写入 `.claude/state/requirements.md`。这个文件是所有 Teammate 的需求源头：
+- strategist 读它来做架构规划
+- fixer 读它来理解每个任务的 why
+- reviewer 读它来验证实现是否符合需求
+- context 压缩后 Teammate 可以重新读取
+
+### 3.4 规划 & 任务拆解
+
+**极小需求（一眼看完就能判断）**：直接拆 1-2 个任务，跳到 3.5。
+
+**小/中/大需求**：用 Agent tool 启动 1 个 strategist（model: opus, subagent_type: planner）做正式规划：
+
+strategist 的规划流程：
+1. **读需求**：读 `.claude/state/requirements.md`
+2. **读代码**：用 Explore agent 扫描项目结构、核心模块、已有 pattern
+3. **架构设计**：
+   - 需要新增哪些模块/文件？
+   - 需要修改哪些现有文件？
+   - 数据流怎么走？
+   - 有哪些 edge case？
+4. **任务拆解原则**：
+   - 每个任务是独立可验证的（有明确的"做完"标准）
+   - 任务之间有清晰的依赖关系（blockedBy）
+   - 每个任务 description 包含：做什么 + 为什么 + 验收标准 + 涉及文件
+   - 粒度适中：太大拆不动，太小浪费协调成本
+   - 基础设施任务排前面（数据库表、API 路由、类型定义）
+5. **输出规划文档**：写入 `.claude/state/plan.md`，包含架构图、任务列表、依赖关系、风险点
+
+### 3.5 规模评估 & 确认启动
+
+根据任务数量自动推荐团队配置：
+
+| 规模 | 任务数 | 团队配置 | 执行方式 |
+|------|--------|---------|---------|
+| **极小** | 1-2 | fixer(Opus) 单人 | 当前会话直接 Agent 完成 + 审查 |
+| **小** | 3-5 | discoverer + fixer + reviewer（3 人） | `./start-pipeline.sh "需求摘要"` |
+| **中** | 5-10 | strategist + fixer + reviewer + releaser（4 人） | `./start-pipeline.sh "需求摘要"` |
+| **大** | 10+ | 全部 6 人 | `./start-pipeline.sh --continuous` |
+
+用 AskUserQuestion 展示方案并确认：
+
+```
+需求分析 & 规划完成：
+
+📄 需求文档：.claude/state/requirements.md
+📐 架构规划：.claude/state/plan.md
+
+📋 任务拆解（N 个）：
+  1. [基础] 创建 users 表和 User 模型 — blockedBy: 无
+  2. [基础] 添加 JWT 认证 middleware — blockedBy: #1
+  3. [功能] 实现注册 API — blockedBy: #1
+  4. [功能] 实现登录 API — blockedBy: #2
+  ...
+
+📊 规模评估：中
+👥 推荐团队：strategist(Opus) + fixer(Opus) + reviewer(Opus) + releaser(Sonnet)
+💰 预估成本：~$X
+
+确认启动？（确认 / 调整团队 / 查看规划详情 / 重新描述需求）
 ```
 
-### 模式 3：持续运行
-```bash
-./start-pipeline.sh --continuous
-```
+### 3.6 执行
 
-### 模式 4：只安装
-输出安装完成信息和手动启动指南。
+**极小需求**：
+不启动 start-pipeline.sh，在当前会话直接执行：
+1. 用 Agent tool 启动 1 个 fixer（model: opus）完成任务
+2. 完成后用 Agent tool 启动 1 个 reviewer（model: opus）审查代码
+3. 审查通过后告知用户完成
+
+**小/中/大需求**：
+按 3.5 表格的执行方式启动 start-pipeline.sh。
+Teammate 启动后首先读 `.claude/state/requirements.md` 和 `.claude/state/plan.md` 获取完整上下文。
 
 ## 第四步：CLAUDE.md 检查
 
@@ -234,7 +329,8 @@ Agent Teams 已配置完毕。选择运行模式：
 1. 删除 `.claude/hooks/keep-working.sh` 和 `.claude/hooks/quality-gate.sh`
 2. 从 `.claude/settings.json` 移除 TeammateIdle 和 TaskCompleted hooks
 3. 删除 `start-pipeline.sh`
-4. 保留 CLAUDE.md（用户可能已修改）
+4. 清理 `.claude/state/shutdown-*` 哨兵文件
+5. 保留 CLAUDE.md（用户可能已修改）
 
 ## 成本提醒
 
@@ -242,8 +338,10 @@ Agent Teams 已配置完毕。选择运行模式：
 
 | 配置 | 预估消耗/小时 | 约合美元/小时 |
 |------|-------------|-------------|
-| 3 Teammates (Sonnet) | ~300K tokens | ~$0.9 |
-| 4 Teammates (Sonnet) | ~500K tokens | ~$1.5 |
-| 6 Teammates (Sonnet) | ~800K tokens | ~$2.4 |
+| 3 Teammates (1 Sonnet + 2 Opus) | ~500K tokens | ~$3.0 |
+| 4 Teammates (1 Sonnet + 3 Opus) | ~900K tokens | ~$5.5 |
+| 6 Teammates (3 Sonnet + 3 Opus) | ~1.3M tokens | ~$8.0 |
+
+模型分配：fixer + reviewer + strategist 用 Opus（质量优先），discoverer + designer + releaser 用 Sonnet。
 
 安全阀：默认 50 轮后自动停止（可通过 `AI_PIPELINE_MAX_ROUNDS` 调整）。

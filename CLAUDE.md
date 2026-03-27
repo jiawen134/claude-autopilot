@@ -43,6 +43,24 @@
 | `retry-{hash}` | Quality gate retry counter per task | quality-gate.sh |
 | `status-{name}.json` | Current teammate status (dashboard source) | Both hooks |
 | `usage.jsonl` | Hook invocation log | Both hooks |
+| `shutdown-{team}` | Graceful shutdown sentinel | Team Lead |
+| `requirements.md` | Complete requirements (survives compaction) | Intake phase |
+| `plan.md` | Architecture + task breakdown | strategist |
+
+### Lifecycle & Communication
+
+**Team lifecycle**: `TeamCreate` → spawn Teammates → work → `shutdown_request` → `TeamDelete`
+
+**Communication via SendMessage**:
+- Teammates message each other directly (reviewer → fixer, discoverer → fixer)
+- Lead broadcasts to all with `to: "*"`
+- Teammates discover each other via `~/.claude/teams/{team-name}/config.json`
+
+**Task metadata**: `{ priority: "P0", type: "security", found_by: "discoverer" }`
+
+**Lead tools**: `TaskOutput` (view teammate output), `TaskStop` (kill stuck tasks)
+
+**Graceful shutdown**: `shutdown_request` → `shutdown_response` → sentinel file → `TeamDelete`
 
 # Compact Instructions
 
@@ -61,23 +79,27 @@ When compacting, discard:
 
 ## For Teammates
 When compacting, preserve:
-- Your role name and current Task assignment
+- Your role name and current Task assignment (ID + subject)
 - Files you modified in this session (paths only)
 - Current test/lint pass/fail state
-- The task you are working on (ID + description)
+- Current blocker if any
 
 When compacting, discard:
-- Full file contents (re-read when needed)
-- Previous Task outputs and skill reports
+- Full file contents (re-read from disk when needed)
+- Previous skill outputs (/qa reports, /review checklists, /cso results)
 - Intermediate debugging steps and exploration
-- Other teammates' status (re-check via Task list)
+- Other teammates' messages (re-check via Task list)
+
+After compaction, re-read `.claude/state/requirements.md` and `.claude/state/plan.md` if you need context for your current Task.
 
 ## Recovery Protocol
 When a teammate starts a new session or after compaction:
-1. Read `.claude/state/progress.log` for recent history
-2. Check Task list for pending/in_progress assignments
-3. Run `git log --oneline -5` for recent commits
-4. Resume work — no need to re-discover context
+1. Read `.claude/state/requirements.md` for full requirements context
+2. Read `.claude/state/plan.md` for architecture and task breakdown
+3. Read `.claude/state/progress.log` for recent history
+4. Check Task list for pending/in_progress assignments
+5. Run `git log --oneline -5` for recent commits
+6. Resume work — no need to re-discover context
 
 ### Hooks
 - **TeammateIdle** → `.claude/hooks/keep-working.sh` — drives continuous work
@@ -85,6 +107,10 @@ When a teammate starts a new session or after compaction:
 
 ### Lead Skills
 The Team Lead (you) should use:
+- `TeamCreate` — create team before spawning teammates
 - `/careful` — enable safety guardrails before starting
 - `/setup-browser-cookies` — authenticate browser sessions
 - `/setup-deploy` — configure deployment (if applicable)
+- `SendMessage` — coordinate teammates, broadcast announcements
+- `TaskOutput` / `TaskStop` — monitor and control teammate tasks
+- `TeamDelete` — clean up after graceful shutdown
