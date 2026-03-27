@@ -216,14 +216,16 @@ locked_increment() {
     local val=0
 
     if portable_lock "$lock_file" 5; then
-        [ -f "$counter_file" ] && val=$(cat "$counter_file" 2>/dev/null || echo 0)
+        [ -f "$counter_file" ] && val=$(tr -dc '0-9' < "$counter_file" 2>/dev/null || echo 0)
+        [ -z "$val" ] && val=0
         val=$((val + 1))
         echo "$val" > "$counter_file"
         portable_unlock "$lock_file"
     else
         # 锁失败时读取当前值 +1（可能不精确但不会卡死）
         log_warn "Lock failed for $counter_file, falling back to unprotected increment"
-        [ -f "$counter_file" ] && val=$(cat "$counter_file" 2>/dev/null || echo 0)
+        [ -f "$counter_file" ] && val=$(tr -dc '0-9' < "$counter_file" 2>/dev/null || echo 0)
+        [ -z "$val" ] && val=0
         val=$((val + 1))
         echo "$val" > "$counter_file" 2>/dev/null || log_warn "Failed to write $counter_file"
     fi
@@ -236,10 +238,12 @@ locked_read() {
     local val=0
 
     if portable_lock "$lock_file" 3; then
-        [ -f "$counter_file" ] && val=$(cat "$counter_file" 2>/dev/null || echo 0)
+        [ -f "$counter_file" ] && val=$(tr -dc '0-9' < "$counter_file" 2>/dev/null || echo 0)
+        [ -z "$val" ] && val=0
         portable_unlock "$lock_file"
     else
-        [ -f "$counter_file" ] && val=$(cat "$counter_file" 2>/dev/null || echo 0)
+        [ -f "$counter_file" ] && val=$(tr -dc '0-9' < "$counter_file" 2>/dev/null || echo 0)
+        [ -z "$val" ] && val=0
     fi
     echo "$val"
 }

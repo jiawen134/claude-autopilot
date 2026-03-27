@@ -124,6 +124,8 @@ DURATION=$(( $(date +%s) - START_TS ))
 OUTCOME="pass"
 [ "$FAILED" = true ] && OUTCOME="fail"
 
+# Validate RETRY_COUNT is numeric before passing as --argjson
+[[ "$RETRY_COUNT" =~ ^[0-9]+$ ]] || RETRY_COUNT=0
 track_usage "quality-gate" "$TEAMMATE_NAME" "" "$OUTCOME" "$DURATION" "$(jq -cn --arg t "$TASK_SUBJECT" --argjson r "$RETRY_COUNT" '{task:$t,retry:$r}')"
 write_teammate_status "$TEAMMATE_NAME" "$ROLE" "quality-gate:$OUTCOME" "$TASK_SUBJECT" 0 0
 
