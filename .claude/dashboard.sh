@@ -110,7 +110,8 @@ if [ -f "$USAGE_FILE" ] && command -v jq &>/dev/null; then
         [ "$ACTION" = "pass" ] && CLS="pass"
         if [ "$ACTION" = "fail" ] || [ "$ACTION" = "test_fail" ] || [ "$ACTION" = "lint_fail" ]; then CLS="fail"; fi
         ACTION_ESC=$(html_escape "$ACTION")
-        echo "<div class=\"evt\"><span class=\"$CLS\">${TS}</span>  ${TM}  ${HOOK}  ${ACTION_ESC}  ${DUR}s</div>" >> "$OUTPUT"
+        CLS_ESC=$(html_escape "$CLS")
+        echo "<div class=\"evt\"><span class=\"${CLS_ESC}\">${TS}</span>  ${TM}  ${HOOK}  ${ACTION_ESC}  ${DUR}s</div>" >> "$OUTPUT"
     done
 else
     echo '<div class="evt">No events yet</div>' >> "$OUTPUT"

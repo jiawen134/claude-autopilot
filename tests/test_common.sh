@@ -462,6 +462,66 @@ else
 fi
 rm -f "$STATE_DIR/shutdown-default" "$STATE_DIR/shutdown-testteam"
 
+# ===== JSON Fallback Escaping Tests =====
+echo ""
+echo "=== JSON Fallback Escaping ==="
+
+# Test write_discovery with newlines in description (fallback path)
+TOTAL=$((TOTAL+1))
+echo -n "write_discovery escapes newlines... "
+rm -f "$STATE_DIR/discoveries.jsonl"
+_ORIG_PATH="$PATH"
+# Force fallback by temporarily hiding jq
+PATH="/usr/bin:/bin"
+hash -r 2>/dev/null
+write_discovery "tester" "P1" "line1
+line2"
+PATH="$_ORIG_PATH"
+hash -r 2>/dev/null
+# Verify single JSON line (no raw newline breaking JSONL)
+LC_DISC=$(wc -l < "$STATE_DIR/discoveries.jsonl" | tr -d ' ')
+if [ "$LC_DISC" = "1" ]; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (expected 1 line, got $LC_DISC)"; FAIL=$((FAIL+1))
+fi
+
+# Test write_commit_log with tabs in message (fallback path)
+TOTAL=$((TOTAL+1))
+echo -n "write_commit_log escapes tabs... "
+rm -f "$STATE_DIR/commits.log"
+PATH="/usr/bin:/bin"
+hash -r 2>/dev/null
+write_commit_log "tester" "abc123" "fix	tab	issue"
+PATH="$_ORIG_PATH"
+hash -r 2>/dev/null
+LC_COMMIT=$(wc -l < "$STATE_DIR/commits.log" | tr -d ' ')
+if [ "$LC_COMMIT" = "1" ]; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (expected 1 line, got $LC_COMMIT)"; FAIL=$((FAIL+1))
+fi
+
+# ===== Empty Name Sanitization Tests =====
+echo ""
+echo "=== Empty Name Sanitization ==="
+
+# Test that keep-working.sh handles all-special-char names
+KW_SANITIZE_PROJ="$TEST_TMP/kw-sanitize"
+mkdir -p "$KW_SANITIZE_PROJ/.claude/state"
+echo "50" > "$KW_SANITIZE_PROJ/.claude/state/round-default-unknown"
+TOTAL=$((TOTAL+1))
+echo -n "empty teammate name defaults to 'unknown'... "
+KW_SANITIZE_EXIT=0
+(export CLAUDE_PROJECT_DIR="$KW_SANITIZE_PROJ" AI_PIPELINE_MAX_ROUNDS=50; \
+ echo '{"teammate_name":"../../../","team_name":"../../../","teammate_role":"fixer"}' | bash "$PROJECT_DIR/bin/keep-working.sh") >/dev/null 2>&1 || KW_SANITIZE_EXIT=$?
+# Should exit 0 (hits MAX_ROUNDS for round-default-unknown) and not crash
+if [ "$KW_SANITIZE_EXIT" -eq 0 ]; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (exit=$KW_SANITIZE_EXIT)"; FAIL=$((FAIL+1))
+fi
+
 echo ""
 echo "=========================================="
 echo "  Results: $PASS passed, $FAIL failed, $TOTAL total"

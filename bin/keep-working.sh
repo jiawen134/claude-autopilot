@@ -27,6 +27,9 @@ ROLE=$(detect_role "$TEAMMATE_NAME" "$TEAMMATE_ROLE")
 # Sanitize TEAMMATE_NAME and TEAM_NAME to prevent path traversal in file paths
 TEAMMATE_NAME="${TEAMMATE_NAME//[^a-zA-Z0-9_-]/}"
 TEAM_NAME="${TEAM_NAME//[^a-zA-Z0-9_-]/}"
+# Guard against empty names after sanitization
+[ -z "$TEAMMATE_NAME" ] && TEAMMATE_NAME="unknown"
+[ -z "$TEAM_NAME" ] && TEAM_NAME="default"
 _LOG_PREFIX="$TEAMMATE_NAME"
 
 # ===== Shutdown check =====
@@ -39,6 +42,8 @@ fi
 ROUND_FILE="${STATE_DIR}/round-${TEAM_NAME}-${TEAMMATE_NAME}"
 LOCK_FILE="${STATE_DIR}/lock-round-${TEAM_NAME}-${TEAMMATE_NAME}"
 MAX_ROUNDS="${AI_PIPELINE_MAX_ROUNDS:-15}"
+# Validate numeric env vars
+[[ "$MAX_ROUNDS" =~ ^[0-9]+$ ]] || { log_warn "Invalid MAX_ROUNDS='$MAX_ROUNDS', using 15"; MAX_ROUNDS=15; }
 
 CURRENT_ROUND=$(locked_increment "$ROUND_FILE" "$LOCK_FILE")
 
@@ -114,6 +119,7 @@ fi
 IDLE_FILE="${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}"
 IDLE_LOCK="${STATE_DIR}/lock-idle-${TEAM_NAME}-${TEAMMATE_NAME}"
 IDLE_THRESHOLD="${AI_PIPELINE_IDLE_THRESHOLD:-3}"
+[[ "$IDLE_THRESHOLD" =~ ^[0-9]+$ ]] || { log_warn "Invalid IDLE_THRESHOLD='$IDLE_THRESHOLD', using 3"; IDLE_THRESHOLD=3; }
 
 IDLE_COUNT=$(locked_increment "$IDLE_FILE" "$IDLE_LOCK")
 

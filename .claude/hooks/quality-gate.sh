@@ -28,8 +28,17 @@ TEAM_NAME=$(json_field "$INPUT" "team_name" "default")
 # Sanitize to prevent path traversal in file paths
 TEAMMATE_NAME="${TEAMMATE_NAME//[^a-zA-Z0-9_-]/}"
 TEAM_NAME="${TEAM_NAME//[^a-zA-Z0-9_-]/}"
+# Guard against empty names after sanitization
+[ -z "$TEAMMATE_NAME" ] && TEAMMATE_NAME="unknown"
+[ -z "$TEAM_NAME" ] && TEAM_NAME="default"
 _LOG_PREFIX="$TEAMMATE_NAME"
 ROLE=$(detect_role "$TEAMMATE_NAME" "$TEAMMATE_ROLE")
+
+# ===== Shutdown check =====
+if is_shutdown "$TEAM_NAME"; then
+    log_info "Shutdown sentinel detected. Passing through."
+    exit 0
+fi
 
 # ===== 重试计数 =====
 if command -v sha256sum &>/dev/null; then
@@ -43,6 +52,7 @@ fi
 RETRY_FILE="${STATE_DIR}/retry-${TASK_HASH}"
 LOCK_FILE="${STATE_DIR}/lock-retry-${TASK_HASH}"
 MAX_RETRIES="${QUALITY_GATE_MAX_RETRIES:-5}"
+[[ "$MAX_RETRIES" =~ ^[0-9]+$ ]] || { log_warn "Invalid MAX_RETRIES='$MAX_RETRIES', using 5"; MAX_RETRIES=5; }
 
 RETRY_COUNT=$(locked_read "$RETRY_FILE" "$LOCK_FILE")
 

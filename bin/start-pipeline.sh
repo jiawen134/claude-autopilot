@@ -155,10 +155,6 @@ Read-only agents（Explore, Plan）不能做实现工作，不要用于任何角
 ## Token 优化规则
 
 ### reviewer 增量审查
-reviewer 每次优先审查最新的 `git diff`，不要重新审查整个代码库。
-对应命令：`git diff HEAD~1` 或 `git diff $(git merge-base HEAD main)..HEAD`
-
-### reviewer 增量审查
 reviewer 每次只审查最新的 `git diff`，不要重新审查整个代码库。
 对应命令：`git diff HEAD~1` 或 `git diff $(git merge-base HEAD main)..HEAD`
 

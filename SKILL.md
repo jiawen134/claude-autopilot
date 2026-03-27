@@ -344,4 +344,4 @@ Teammate 启动后首先读 `.claude/state/requirements.md` 和 `.claude/state/p
 
 模型分配：fixer + reviewer + strategist 用 Opus（质量优先），discoverer + designer + releaser 用 Sonnet。
 
-安全阀：默认 50 轮后自动停止（可通过 `AI_PIPELINE_MAX_ROUNDS` 调整）。
+安全阀：默认 15 轮后自动停止（可通过 `AI_PIPELINE_MAX_ROUNDS` 调整）。

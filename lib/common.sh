@@ -222,10 +222,10 @@ locked_increment() {
         portable_unlock "$lock_file"
     else
         # 锁失败时读取当前值 +1（可能不精确但不会卡死）
+        log_warn "Lock failed for $counter_file, falling back to unprotected increment"
         [ -f "$counter_file" ] && val=$(cat "$counter_file" 2>/dev/null || echo 0)
         val=$((val + 1))
-        # best-effort write
-        echo "$val" > "$counter_file" 2>/dev/null || true
+        echo "$val" > "$counter_file" 2>/dev/null || log_warn "Failed to write $counter_file"
     fi
     echo "$val"
 }
@@ -497,9 +497,12 @@ write_discovery() {
         line=$(jq -cn --arg ts "$ts" --arg r "$role" --arg p "$priority" --arg d "$description" \
             '{ts:$ts,role:$r,priority:$p,description:$d,resolved:false}')
     else
-        # Escape backslashes first, then quotes for JSON safety
+        # Escape backslashes, quotes, newlines, tabs, carriage returns for JSON safety
         local safe_desc="${description//\\/\\\\}"
         safe_desc="${safe_desc//\"/\\\"}"
+        safe_desc="${safe_desc//$'\n'/\\n}"
+        safe_desc="${safe_desc//$'\t'/\\t}"
+        safe_desc="${safe_desc//$'\r'/\\r}"
         line="{\"ts\":\"${ts}\",\"role\":\"${role}\",\"priority\":\"${priority}\",\"description\":\"${safe_desc}\",\"resolved\":false}"
     fi
     echo "$line" >> "$discoveries_file"
@@ -531,6 +534,9 @@ write_commit_log() {
     else
         local safe_msg="${message//\\/\\\\}"
         safe_msg="${safe_msg//\"/\\\"}"
+        safe_msg="${safe_msg//$'\n'/\\n}"
+        safe_msg="${safe_msg//$'\t'/\\t}"
+        safe_msg="${safe_msg//$'\r'/\\r}"
         line="{\"ts\":\"${ts}\",\"role\":\"${role}\",\"hash\":\"${hash:0:8}\",\"message\":\"${safe_msg}\"}"
     fi
     echo "$line" >> "$commits_file"
