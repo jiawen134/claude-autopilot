@@ -61,11 +61,13 @@ _HAS_HOOKS="no"
 [ -f ".claude/hooks/keep-working.sh" ] && _HAS_HOOKS="yes"
 echo "HAS_HOOKS: $_HAS_HOOKS"
 
-# 检测 tmux / jq
+# 检测 tmux / jq / claude CLI
 _HAS_TMUX="no"; command -v tmux >/dev/null 2>&1 && _HAS_TMUX="yes"
 _HAS_JQ="no"; command -v jq >/dev/null 2>&1 && _HAS_JQ="yes"
+_HAS_CLAUDE="no"; command -v claude >/dev/null 2>&1 && _HAS_CLAUDE="yes"
 echo "HAS_TMUX: $_HAS_TMUX"
 echo "HAS_JQ: $_HAS_JQ"
+echo "HAS_CLAUDE: $_HAS_CLAUDE"
 ```
 
 ## 第一步：环境检查
@@ -75,14 +77,15 @@ echo "HAS_JQ: $_HAS_JQ"
 ### 必须满足
 1. **HAS_GIT=yes** — 没有 git 仓库则先 `git init && git add -A && git commit -m "init"`
 2. **HAS_JQ=yes** — Hook 脚本依赖 jq，没有则提示安装：`sudo apt install jq` / `brew install jq`
+3. **HAS_CLAUDE=yes** — `start-pipeline.sh` 是 `claude --max-turns 50` 的包装脚本，需要 Claude Code CLI。没有则提示安装：参见 https://claude.ai/code
 
 ### 建议满足
-3. **HAS_TESTS=yes** — quality-gate.sh 需要测试。没有则建议先写基础测试
-4. **HAS_TMUX=yes** — 多 Teammate 并行需要 tmux。没有会用 in-process 模式
+4. **HAS_TESTS=yes** — quality-gate.sh 需要测试。没有则建议先写基础测试
+5. **HAS_TMUX=yes** — 多 Teammate 并行需要 tmux。没有会用 in-process 模式
 
 ### 自动处理
-5. **AGENT_TEAMS=not_set** — 自动设置环境变量
-6. **HAS_HOOKS=no** — 自动安装 Hook 文件
+6. **AGENT_TEAMS=not_set** — 自动设置环境变量
+7. **HAS_HOOKS=no** — 自动安装 Hook 文件
 
 如果有必须条件不满足，用 AskUserQuestion 确认后再继续。
 
