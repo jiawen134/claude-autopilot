@@ -160,14 +160,14 @@ KW_TASKS_EXIT=0
 assert_eq "exits 2 when tasks remain" "2" "$KW_TASKS_EXIT"
 rm -rf "$TASK_DIR_KW"
 
-# Test: discoverer exits 0 after role_limit=20 rounds
+# Test: discoverer exits 2 (auto-restart) after role_limit=3 rounds
 KW_DISC_PROJ="$TEST_TMP/kw-disc"
 mkdir -p "$KW_DISC_PROJ/.claude/state"
-echo "21" > "$KW_DISC_PROJ/.claude/state/round-kwdisc-frank"
+echo "4" > "$KW_DISC_PROJ/.claude/state/round-kwdisc-frank"
 KW_DISC_EXIT=0
 (export CLAUDE_PROJECT_DIR="$KW_DISC_PROJ" AI_PIPELINE_MAX_ROUNDS=50; \
  echo '{"teammate_name":"frank","team_name":"kwdisc","teammate_role":"discoverer"}' | bash "$KW") >/dev/null 2>&1 || KW_DISC_EXIT=$?
-assert_eq "discoverer exits 0 after role_limit=20" "0" "$KW_DISC_EXIT"
+assert_eq "discoverer exits 2 (auto-restart) after role_limit=3" "2" "$KW_DISC_EXIT"
 
 # Test: fixer exits 2 when active (has rounds remaining)
 KW_ACTIVE_PROJ="$TEST_TMP/kw-active"
@@ -241,6 +241,32 @@ EOF
 (export CLAUDE_PROJECT_DIR="$DB_XSS"; bash "$DB") >/dev/null 2>&1 || true
 DB_XSS_HTML=$(cat "$DB_XSS/.claude/state/dashboard.html" 2>/dev/null || echo "")
 assert_not_contains "XSS: script tag escaped in HTML" "<script>alert(1)</script>" "$DB_XSS_HTML"
+
+# ===== start-pipeline.sh =====
+echo ""
+echo "=== start-pipeline.sh ==="
+
+SP="$PROJECT_DIR/bin/start-pipeline.sh"
+
+# Test: check_prerequisites fails when jq is missing
+# Override `command` via exported function so `command -v jq` returns false,
+# while all other `command -v` calls (claude, tmux) use real lookup.
+SP_NOJQ="$TEST_TMP/sp-nojq"
+mkdir -p "$SP_NOJQ/fake-bin"
+printf '#!/bin/sh\ntrue\n' > "$SP_NOJQ/fake-bin/claude"
+chmod +x "$SP_NOJQ/fake-bin/claude"
+SP_NOJQ_EXIT=0
+(
+  command() {
+    if [ "${1:-}" = "-v" ] && [ "${2:-}" = "jq" ]; then return 1; fi
+    builtin command "$@"
+  }
+  export -f command
+  export PATH="$SP_NOJQ/fake-bin:$PATH"
+  bash "$SP" 2>/dev/null
+) || SP_NOJQ_EXIT=$?
+assert_eq "check_prerequisites exits 1 when jq missing" "1" "$SP_NOJQ_EXIT"
+
 
 echo ""
 echo "=========================================="

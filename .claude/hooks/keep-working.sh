@@ -32,7 +32,7 @@ _LOG_PREFIX="$TEAMMATE_NAME"
 # ===== 轮次计数 =====
 ROUND_FILE="${STATE_DIR}/round-${TEAM_NAME}-${TEAMMATE_NAME}"
 LOCK_FILE="${STATE_DIR}/lock-round-${TEAM_NAME}-${TEAMMATE_NAME}"
-MAX_ROUNDS="${AI_PIPELINE_MAX_ROUNDS:-50}"
+MAX_ROUNDS="${AI_PIPELINE_MAX_ROUNDS:-15}"
 
 CURRENT_ROUND=$(locked_increment "$ROUND_FILE" "$LOCK_FILE")
 
@@ -57,7 +57,7 @@ REMAINING=$((PENDING + IN_PROGRESS))
 
 if [ "$REMAINING" -gt 0 ]; then
     write_teammate_status "$TEAMMATE_NAME" "$ROLE" "claiming_task" "${PENDING}p+${IN_PROGRESS}ip" "$CURRENT_ROUND" "$MAX_ROUNDS"
-    log_info "[${ROLE}:${CURRENT_ROUND}/${MAX_ROUNDS}] 还有 ${PENDING} 待处理 + ${IN_PROGRESS} 进行中。认领下一个。"
+    log_info "[${ROLE}:R${CURRENT_ROUND}] ${PENDING}p+${IN_PROGRESS}ip tasks. Claiming next."
     track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "claim_task" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
     exit 2
 fi
@@ -75,8 +75,8 @@ if [ -n "${TEST_CMD:-}" ]; then
     if [ "$TEST_EXIT" -ne 0 ]; then
         write_teammate_status "$TEAMMATE_NAME" "$ROLE" "test_failed" "exit=$TEST_EXIT" "$CURRENT_ROUND" "$MAX_ROUNDS"
         FC=$(echo "$TEST_OUTPUT" | grep -ciE "FAIL|failed|error|panic" || echo "?")
-        log_error "[${ROLE}:${CURRENT_ROUND}/${MAX_ROUNDS}] 测试失败（${FC} 处）！创建修复任务。"
-        echo "$TEST_OUTPUT" | tail -20 >&2
+        FIRST_ERR=$(echo "$TEST_OUTPUT" | grep -m1 -iE "FAIL|ERROR|panic" || echo "unknown")
+        log_error "[${ROLE}:R${CURRENT_ROUND}] TEST_FAIL(${FC}): ${FIRST_ERR:0:80}"
         track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "test_fail" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
         exit 2
     fi
@@ -91,29 +91,25 @@ if [ -n "${LINT_CMD:-}" ]; then
     rm -f "$_lint_outfile"
     if [ "$LINT_EXIT" -ne 0 ]; then
         write_teammate_status "$TEAMMATE_NAME" "$ROLE" "lint_failed" "exit=$LINT_EXIT" "$CURRENT_ROUND" "$MAX_ROUNDS"
-        log_error "[${ROLE}:${CURRENT_ROUND}/${MAX_ROUNDS}] Lint 问题！创建修复任务。"
-        echo "$LINT_OUTPUT" | tail -15 >&2
+        LC=$(echo "$LINT_OUTPUT" | wc -l | tr -d ' ')
+        FIRST_LINT=$(echo "$LINT_OUTPUT" | grep -m1 -iE "error|warning|:" || echo "unknown")
+        log_error "[${ROLE}:R${CURRENT_ROUND}] LINT_FAIL(${LC}): ${FIRST_LINT:0:80}"
         track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "lint_fail" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
         exit 2
     fi
 fi
 
 # ===== 第3层：按角色轮转 =====
-role_limit() {
-    case "$1" in
-        discoverer) echo 20 ;; fixer) echo 10 ;; reviewer) echo 8 ;;
-        designer)   echo 6 ;;  releaser) echo 6 ;; strategist) echo 8 ;;
-        *)          echo 3 ;;
-    esac
-}
-
 ROLE_LIMIT=$(role_limit "$ROLE")
 if [ "$CURRENT_ROUND" -gt "$ROLE_LIMIT" ]; then
-    write_teammate_status "$TEAMMATE_NAME" "$ROLE" "idle" "done after $ROLE_LIMIT rounds" "$CURRENT_ROUND" "$MAX_ROUNDS"
-    log_info "[${ROLE}:${CURRENT_ROUND}/${MAX_ROUNDS}] 已完成 ${ROLE_LIMIT} 轮。休息。"
-    rm -f "$ROUND_FILE"
-    track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "idle" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
-    exit 0
+    # Auto-restart: reset counter and continue (Peter mode)
+    # Write progress to disk so next cycle has context
+    reset_role_cycle "$ROLE" "$CURRENT_ROUND" "cycle_${CURRENT_ROUND}_complete"
+    CURRENT_ROUND=1
+    write_teammate_status "$TEAMMATE_NAME" "$ROLE" "restarting" "cycle reset after $ROLE_LIMIT rounds" "$CURRENT_ROUND" "$MAX_ROUNDS"
+    log_info "[${ROLE}:reset/${MAX_ROUNDS}] cycle done, resetting. $(state_summary)"
+    track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "cycle_reset" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
+    exit 2
 fi
 
 SKILL_MSG=""
@@ -138,6 +134,6 @@ case "$ROLE" in
 esac
 
 write_teammate_status "$TEAMMATE_NAME" "$ROLE" "working" "$SKILL_MSG" "$CURRENT_ROUND" "$MAX_ROUNDS"
-log_info "[${ROLE}:${CURRENT_ROUND}/${MAX_ROUNDS}] 请运行 ${SKILL_MSG}"
+log_info "[${ROLE}:R${CURRENT_ROUND}] ${SKILL_MSG} | $(state_summary)"
 track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "skill_rotate" "$(($(date +%s)-START_TS))" "$(jq -cn --argjson r "$CURRENT_ROUND" --arg s "$SKILL_MSG" '{round:$r,skill:$s}')"
 exit 2

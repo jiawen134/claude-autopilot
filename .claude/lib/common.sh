@@ -74,12 +74,13 @@ portable_lock() {
         while ! mkdir "$lockfile.d" 2>/dev/null; do
             if [ "$(date +%s)" -ge "$deadline" ]; then
                 log_warn "Lock timeout: $lockfile"
-                # 清理可能的死锁（超过 60s 的锁）
+                # 清理死锁：检查持有者 PID 是否存活
                 if [ -d "$lockfile.d" ]; then
-                    local lock_age
+                    local holder_pid lock_age
+                    holder_pid=$(cat "$lockfile.d/pid" 2>/dev/null || echo "")
                     lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile.d" 2>/dev/null || stat -f %m "$lockfile.d" 2>/dev/null || echo 0) ))
-                    if [ "$lock_age" -gt 60 ]; then
-                        rmdir "$lockfile.d" 2>/dev/null
+                    if [ "$lock_age" -gt 60 ] && { [ -z "$holder_pid" ] || ! kill -0 "$holder_pid" 2>/dev/null; }; then
+                        rm -rf "$lockfile.d" 2>/dev/null
                         continue
                     fi
                 fi
@@ -87,6 +88,8 @@ portable_lock() {
             fi
             sleep 0.1 2>/dev/null || sleep 1
         done
+        # 写入 PID 用于死锁检测
+        echo $$ > "$lockfile.d/pid" 2>/dev/null
         return 0
     fi
 }
@@ -102,7 +105,7 @@ portable_unlock() {
             unset '_LOCK_FDS[$lockfile]'
         fi
     else
-        rmdir "$lockfile.d" 2>/dev/null
+        rm -rf "$lockfile.d" 2>/dev/null
     fi
 }
 
@@ -119,8 +122,9 @@ json_field() {
     fi
 
     # POSIX sed 降级（兼容 macOS + Linux）
+    # 先将转义引号 \" 替换为占位符，匹配后还原，避免截断
     local val
-    val=$(echo "$json" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1)
+    val=$(printf '%s' "$json" | sed 's/\\"/\\u0022/g' | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | sed 's/\\u0022/"/g' | head -1)
     [ -n "$val" ] && { echo "$val"; return; }
 
 
@@ -140,12 +144,36 @@ json_field() {
 # 返回: 命令的退出码
 
 safe_run() {
-    local cmd_str="$1" outfile="${2:-/dev/null}"
+    local cmd_str="$1" outfile="${2:-/dev/null}" max_time="${3:-${SAFE_RUN_TIMEOUT:-120}}"
 
     # Only accept commands set internally by detect_project (hardcoded strings).
     # bash -c -- prevents the string from being interpreted as bash options.
-    bash -c -- "$cmd_str" > "$outfile" 2>&1
-    return $?
+    # Timeout prevents hanging tests from blocking the hook forever.
+    if command -v timeout &>/dev/null; then
+        timeout "$max_time" bash -c -- "$cmd_str" > "$outfile" 2>&1
+    elif command -v gtimeout &>/dev/null; then
+        gtimeout "$max_time" bash -c -- "$cmd_str" > "$outfile" 2>&1
+    else
+        # macOS fallback: background + kill
+        bash -c -- "$cmd_str" > "$outfile" 2>&1 &
+        local pid=$!
+        local elapsed=0
+        while kill -0 "$pid" 2>/dev/null; do
+            if [ "$elapsed" -ge "$max_time" ]; then
+                kill -TERM "$pid" 2>/dev/null
+                wait "$pid" 2>/dev/null
+                log_warn "Command timed out after ${max_time}s: ${cmd_str:0:60}"
+                return 124
+            fi
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+        wait "$pid"
+        return $?
+    fi
+    local rc=$?
+    [ "$rc" -eq 124 ] && log_warn "Command timed out after ${max_time}s: ${cmd_str:0:60}"
+    return $rc
 }
 
 # ===== 原子文件写入 =====
@@ -325,7 +353,23 @@ detect_project() {
         fi
     fi
 
+    # Allow environment overrides
+    [ -n "${AGENT_TEAMS_TEST_CMD:-}" ] && TEST_CMD="$AGENT_TEAMS_TEST_CMD"
+    [ -n "${AGENT_TEAMS_LINT_CMD:-}" ] && LINT_CMD="$AGENT_TEAMS_LINT_CMD"
+
     log_debug "detect_project: type=$PROJECT_TYPE test='${TEST_CMD:-none}' lint='${LINT_CMD:-none}'"
+}
+
+# ===== 角色轮次上限 =====
+# 用法: role_limit "$role"
+# 输出: 该角色的最大轮次数
+
+role_limit() {
+    case "$1" in
+        discoverer) echo 3 ;; fixer) echo 5 ;; reviewer) echo 3 ;;
+        designer)   echo 2 ;; releaser) echo 2 ;; strategist) echo 2 ;;
+        *)          log_warn "Unknown role '$1', defaulting to limit=1"; echo 1 ;;
+    esac
 }
 
 # ===== 角色识别 =====
@@ -365,15 +409,17 @@ init_state_dir() {
     find "${TMPDIR:-/tmp}" -maxdepth 1 -name "gate-*" -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
     find "$STATE_DIR" -name "tmp-*" -mtime +7 -delete 2>/dev/null || true
 
-    # 日志文件轮转：超过 10MB 时截断
-    local logfile="$STATE_DIR/hook.log"
-    if [ -f "$logfile" ]; then
-        local size
-        size=$(stat -c%s "$logfile" 2>/dev/null || stat -f%z "$logfile" 2>/dev/null || echo 0)
-        if [ "$size" -gt 10485760 ]; then
-            tail -5000 "$logfile" > "$logfile.tmp" && mv "$logfile.tmp" "$logfile"
+    # 日志文件轮转：超过 10MB 时截断（所有可增长的状态文件）
+    local _rotate_file
+    for _rotate_file in "$STATE_DIR/hook.log" "$STATE_DIR/usage.jsonl" "$STATE_DIR/discoveries.jsonl" "$STATE_DIR/progress.log" "$STATE_DIR/commits.log"; do
+        if [ -f "$_rotate_file" ]; then
+            local size
+            size=$(stat -c%s "$_rotate_file" 2>/dev/null || stat -f%z "$_rotate_file" 2>/dev/null || echo 0)
+            if [ "$size" -gt 10485760 ]; then
+                tail -5000 "$_rotate_file" > "$_rotate_file.tmp" && mv "$_rotate_file.tmp" "$_rotate_file"
+            fi
         fi
-    fi
+    done
 }
 
 # ===== 写入 Teammate 状态（仪表盘用）=====
@@ -412,4 +458,112 @@ track_usage() {
     # Append extra fields if provided (must be a complete JSON object, e.g. '{"round":3}')
     [ -n "$extra" ] && json=$(echo "$json" | jq -c --argjson extra "$extra" '. + $extra')
     append_jsonl "${STATE_DIR}/usage.jsonl" "$json"
+}
+
+# ===== State Persistence (Context Management) =====
+# All progress lives on disk, not in agent context.
+# Agents are stateless — they recover by reading these files.
+
+# Write a progress entry when a role completes a cycle
+# Usage: write_progress "$role" "$round" "$summary"
+# Requires: STATE_DIR set by init_state_dir
+write_progress() {
+    [ -n "${STATE_DIR:-}" ] || return 1
+    local role="${1:-unknown}" round="${2:-0}" summary="${3:-}"
+    local progress_file="${STATE_DIR}/progress.log"
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo "${ts} [${role}:${round}] ${summary}" >> "$progress_file"
+}
+
+# Read last N progress entries (default 10)
+# Usage: entries=$(read_progress 5)
+read_progress() {
+    local n="${1:-10}"
+    local progress_file="${STATE_DIR}/progress.log"
+    tail -n "$n" "$progress_file" 2>/dev/null || echo "(no progress yet)"
+}
+
+# Append a discovery to the JSONL log
+# Usage: write_discovery "$role" "$priority" "$description"
+write_discovery() {
+    [ -n "${STATE_DIR:-}" ] || return 1
+    local role="${1:-unknown}" priority="${2:-P2}" description="${3:-}"
+    local discoveries_file="${STATE_DIR}/discoveries.jsonl"
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local line
+    if command -v jq &>/dev/null; then
+        line=$(jq -cn --arg ts "$ts" --arg r "$role" --arg p "$priority" --arg d "$description" \
+            '{ts:$ts,role:$r,priority:$p,description:$d,resolved:false}')
+    else
+        # Escape backslashes first, then quotes for JSON safety
+        local safe_desc="${description//\\/\\\\}"
+        safe_desc="${safe_desc//\"/\\\"}"
+        line="{\"ts\":\"${ts}\",\"role\":\"${role}\",\"priority\":\"${priority}\",\"description\":\"${safe_desc}\",\"resolved\":false}"
+    fi
+    echo "$line" >> "$discoveries_file"
+}
+
+# Count unresolved discoveries
+# Usage: count=$(count_open_discoveries)
+count_open_discoveries() {
+    [ -n "${STATE_DIR:-}" ] || { echo "0"; return; }
+    local discoveries_file="${STATE_DIR}/discoveries.jsonl"
+    if [ ! -f "$discoveries_file" ]; then
+        echo "0"
+        return
+    fi
+    grep -c '"resolved":false' "$discoveries_file" 2>/dev/null || echo "0"
+}
+
+# Log a commit for tracking
+# Usage: write_commit_log "$role" "$commit_hash" "$message"
+write_commit_log() {
+    [ -n "${STATE_DIR:-}" ] || return 1
+    local role="${1:-unknown}" hash="${2:-}" message="${3:-}"
+    local commits_file="${STATE_DIR}/commits.log"
+    local ts line
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    if command -v jq &>/dev/null; then
+        line=$(jq -cn --arg ts "$ts" --arg r "$role" --arg h "${hash:0:8}" --arg m "$message" \
+            '{ts:$ts,role:$r,hash:$h,message:$m}')
+    else
+        local safe_msg="${message//\\/\\\\}"
+        safe_msg="${safe_msg//\"/\\\"}"
+        line="{\"ts\":\"${ts}\",\"role\":\"${role}\",\"hash\":\"${hash:0:8}\",\"message\":\"${safe_msg}\"}"
+    fi
+    echo "$line" >> "$commits_file"
+}
+
+# Generate a 1-line state summary for hook output
+# Usage: summary=$(state_summary)
+state_summary() {
+    local tasks_pending=0 tasks_done=0 discoveries=0 commits=0
+    local task_dir="${HOME:-.}/.claude/tasks"
+
+    if [ -d "$task_dir" ]; then
+        tasks_pending=$(grep -rl '"status"[[:space:]]*:[[:space:]]*"pending"' "$task_dir/" 2>/dev/null | wc -l) || tasks_pending=0
+        tasks_done=$(grep -rl '"status"[[:space:]]*:[[:space:]]*"completed"' "$task_dir/" 2>/dev/null | wc -l) || tasks_done=0
+        tasks_pending="${tasks_pending// /}"
+        tasks_done="${tasks_done// /}"
+    fi
+
+    discoveries=$(count_open_discoveries)
+    if [ -f "${STATE_DIR}/commits.log" ]; then
+        commits=$(wc -l < "${STATE_DIR}/commits.log" 2>/dev/null || echo 0)
+        commits="${commits// /}"
+    fi
+
+    echo "tasks:${tasks_pending}p/${tasks_done}done discoveries:${discoveries}open commits:${commits}"
+}
+
+# Reset role round counter and log progress before reset
+# Usage: reset_role_cycle "$role" "$round" "$reason"
+reset_role_cycle() {
+    local role="${1:-unknown}" round="${2:-0}" reason="${3:-cycle_complete}"
+    local round_file="${STATE_DIR}/round-${TEAM_NAME:-default}-${TEAMMATE_NAME:-unknown}"
+
+    write_progress "$role" "$round" "$reason — $(state_summary)"
+    rm -f "$round_file"
 }

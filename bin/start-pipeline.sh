@@ -66,7 +66,20 @@ build_prompt() {
 你是 AI 全自动流水线的 Team Lead。你的工作是协调团队持续改进这个项目。
 这是一条持续运行的流水线。TeammateIdle Hook 会驱动每个 Teammate 持续循环。
 
-前置：运行 /careful 启用安全护栏（防止 rm -rf、DROP TABLE 等破坏性操作）。
+前置：
+1. 运行 /careful 启用安全护栏
+2. 检查 .claude/state/progress.log — 如果存在，读取最近进度（续接上次流水线）
+3. 检查 Task 列表 — 如果有未完成任务，优先分配给对应角色
+
+## Context 管理（关键！）
+
+Agent 是无状态的。所有进度写入 .claude/state/ 目录：
+- progress.log — 每个角色完成一轮循环后写入
+- discoveries.jsonl — discoverer 发现的问题
+- commits.log — 每次通过 quality gate 后记录
+
+当 Teammate 的角色轮次用完时，hook 会自动重置计数并继续（不会停止）。
+每个 Teammate 重启后应该：先读 progress.log + Task 列表，再继续工作。
 
 ## 启动团队（6 个 Teammate，全部使用 Sonnet 模型）
 
@@ -160,7 +173,10 @@ build_prompt() {
 3. 你（Lead）负责：初始运行 /careful, /setup-browser-cookies, /setup-deploy
 4. 持续循环：发现 → 修复 → 审查 → 设计审查 → 发布 → 监控 → 再发现...
 5. TaskCompleted Hook 自动验证测试通过才允许标记完成
-6. TeammateIdle Hook 驱动每个 Teammate 持续工作，直到安全阀触发
+6. TeammateIdle Hook 驱动每个 Teammate 持续工作，到轮次上限自动重置继续
+7. **每个 Teammate 每次修复后立即 git commit**（粒度越小越安全，像 Peter 一样）
+8. **Task 是唯一的真相来源**——不要靠 context 记忆，所有进度写 Task
+9. **Hook 输出只看 1 行摘要**——不要展开详情，节省 context
 
 开始吧！
 PROMPT
@@ -263,8 +279,8 @@ main() {
     log "启动 Team Lead..."
     echo ""
 
-    # Pass prompt as positional argument to start interactive session with initial context
-    claude "$PROMPT"
+    # Pass prompt with --max-turns to prevent context exhaustion
+    claude --max-turns 50 "$PROMPT"
 
     log "流水线结束"
 }

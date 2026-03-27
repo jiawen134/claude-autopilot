@@ -53,6 +53,18 @@ assert_fail() {
     fi
 }
 
+assert_contains() {
+    local desc="$1" needle="$2" haystack="$3"
+    TOTAL=$((TOTAL + 1))
+    if echo "$haystack" | grep -qF "$needle"; then
+        PASS=$((PASS + 1))
+        echo "  PASS: $desc"
+    else
+        FAIL=$((FAIL + 1))
+        echo "  FAIL: $desc (expected to contain '$needle', got '$haystack')"
+    fi
+}
+
 # ===== 测试临时目录 =====
 TEST_TMP=$(mktemp -d)
 trap 'rm -rf "$TEST_TMP"' EXIT
@@ -65,6 +77,7 @@ assert_eq "missing field returns default" "fallback" "$(json_field '{"name":"hel
 assert_eq "nested quotes" "hello world" "$(json_field '{"msg":"hello world"}' "msg")"
 assert_eq "empty json" "default" "$(json_field '{}' "name" "default")"
 assert_eq "number-like value" "42" "$(json_field '{"count":"42"}' "count")"
+assert_eq "escaped quotes in value" 'hello"world' "$(json_field '{"msg":"hello\"world"}' "msg")"
 
 echo ""
 echo "=== detect_role ==="
@@ -85,6 +98,23 @@ assert_eq "unknown name" "unknown" "$(detect_role "Thomas" "")"
 assert_eq "case insensitive" "discoverer" "$(detect_role "QA-DISCOVERER" "")"
 # 关键：prefix 不应该匹配 fixer
 assert_eq "prefix should NOT match fixer" "unknown" "$(detect_role "prefix-handler" "")"
+
+echo ""
+echo "=== role_limit ==="
+assert_eq "fixer limit" "5" "$(role_limit "fixer")"
+assert_eq "discoverer limit" "3" "$(role_limit "discoverer")"
+# Unknown role should warn and return 1
+UNKNOWN_LIMIT=$(role_limit "bogus_role" 2>/dev/null)
+assert_eq "unknown role returns 1" "1" "$UNKNOWN_LIMIT"
+WARN_OUTPUT=$(role_limit "bogus_role" 2>&1 >/dev/null)
+TOTAL=$((TOTAL+1))
+if echo "$WARN_OUTPUT" | grep -q "Unknown role"; then
+    PASS=$((PASS+1))
+    echo "  PASS: unknown role emits warning"
+else
+    FAIL=$((FAIL+1))
+    echo "  FAIL: unknown role should emit warning (got: $WARN_OUTPUT)"
+fi
 
 echo ""
 echo "=== atomic_write ==="
@@ -124,6 +154,19 @@ echo "=== safe_run ==="
 assert_ok "true succeeds" safe_run "echo hello" "$TEST_TMP/out.txt"
 assert_eq "output captured" "hello" "$(cat "$TEST_TMP/out.txt")"
 assert_fail "false fails" safe_run "exit 1" "$TEST_TMP/fail.txt"
+
+# safe_run timeout test
+TOTAL=$((TOTAL+1))
+echo -n "  "
+SAFE_RUN_TIMEOUT=1 safe_run "sleep 10" "$TEST_TMP/timeout.txt" 1
+TIMEOUT_RC=$?
+if [ "$TIMEOUT_RC" -eq 124 ]; then
+    echo "PASS: safe_run timeout returns 124"
+    PASS=$((PASS+1))
+else
+    echo "FAIL: safe_run timeout (expected rc=124, got=$TIMEOUT_RC)"
+    FAIL=$((FAIL+1))
+fi
 
 echo ""
 echo "=== portable_lock / unlock ==="
@@ -197,6 +240,172 @@ assert_eq "node project type" "node" "$PROJECT_TYPE"
 assert_eq "node TEST_CMD" "npm test" "$TEST_CMD"
 assert_eq "node LINT_CMD" "npm run lint" "$LINT_CMD"
 assert_eq "node TYPE_CMD" "npm run typecheck" "$TYPE_CMD"
+
+echo ""
+echo "=== detect_project (rust type) ==="
+RUST_TMP="$TEST_TMP/proj-rust"
+mkdir -p "$RUST_TMP"
+touch "$RUST_TMP/Cargo.toml"
+cd "$RUST_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "rust project type" "rust" "$PROJECT_TYPE"
+assert_eq "rust TEST_CMD" "cargo test" "$TEST_CMD"
+assert_eq "rust LINT_CMD" "cargo clippy -- -D warnings" "$LINT_CMD"
+
+echo ""
+echo "=== detect_project (go type) ==="
+GO_TMP="$TEST_TMP/proj-go"
+mkdir -p "$GO_TMP"
+touch "$GO_TMP/go.mod"
+cd "$GO_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "go project type" "go" "$PROJECT_TYPE"
+assert_eq "go TEST_CMD" "go test ./..." "$TEST_CMD"
+
+echo ""
+echo "=== detect_project (python type) ==="
+PY_TMP="$TEST_TMP/proj-python"
+mkdir -p "$PY_TMP"
+touch "$PY_TMP/pyproject.toml"
+cd "$PY_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "python project type" "python" "$PROJECT_TYPE"
+assert_contains "python TEST_CMD contains pytest" "pytest" "$TEST_CMD"
+
+echo ""
+echo "=== detect_project (java-maven type) ==="
+MVN_TMP="$TEST_TMP/proj-maven"
+mkdir -p "$MVN_TMP"
+touch "$MVN_TMP/pom.xml"
+cd "$MVN_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "java-maven project type" "java-maven" "$PROJECT_TYPE"
+assert_contains "java-maven TEST_CMD contains mvn" "mvn" "$TEST_CMD"
+
+echo ""
+echo "=== detect_project (java-gradle type) ==="
+GRADLE_TMP="$TEST_TMP/proj-gradle"
+mkdir -p "$GRADLE_TMP"
+touch "$GRADLE_TMP/build.gradle"
+cd "$GRADLE_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "java-gradle project type" "java-gradle" "$PROJECT_TYPE"
+assert_contains "java-gradle TEST_CMD contains gradle" "gradle" "$TEST_CMD"
+
+echo ""
+echo "=== detect_project (php type) ==="
+PHP_TMP="$TEST_TMP/proj-php"
+mkdir -p "$PHP_TMP/vendor/bin"
+touch "$PHP_TMP/composer.json"
+touch "$PHP_TMP/vendor/bin/phpunit"
+cd "$PHP_TMP"
+detect_project
+cd "$_ORIG_DIR"
+assert_eq "php project type" "php" "$PROJECT_TYPE"
+assert_contains "php TEST_CMD contains phpunit" "phpunit" "$TEST_CMD"
+
+# ===== State Persistence Tests =====
+echo ""
+echo "=== State Persistence ==="
+
+# Test write_progress + read_progress
+TOTAL=$((TOTAL+1))
+echo -n "write_progress appends entry... "
+rm -f "$STATE_DIR/progress.log"
+write_progress "fixer" "3" "cycle complete"
+if grep -q "\[fixer:3\] cycle complete" "$STATE_DIR/progress.log" 2>/dev/null; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+fi
+
+write_progress "reviewer" "2" "review done"
+LC=$(wc -l < "$STATE_DIR/progress.log" | tr -d ' ')
+assert_eq "write_progress appends multiple" "2" "$LC"
+
+TOTAL=$((TOTAL+1))
+echo -n "read_progress returns last entry... "
+RESULT=$(read_progress 1)
+if echo "$RESULT" | grep -q "reviewer"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (got: $RESULT)"; FAIL=$((FAIL+1))
+fi
+
+rm -f "$STATE_DIR/progress.log"
+RESULT=$(read_progress 5)
+assert_eq "read_progress no file fallback" "(no progress yet)" "$RESULT"
+
+# Test write_discovery + count_open_discoveries
+TOTAL=$((TOTAL+1))
+echo -n "write_discovery creates JSONL... "
+rm -f "$STATE_DIR/discoveries.jsonl"
+write_discovery "discoverer" "P1" "button fails"
+if grep -q '"resolved":false' "$STATE_DIR/discoveries.jsonl" 2>/dev/null; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+fi
+
+write_discovery "discoverer" "P0" "crash"
+RESULT=$(count_open_discoveries)
+assert_eq "count_open_discoveries counts" "2" "$RESULT"
+
+rm -f "$STATE_DIR/discoveries.jsonl"
+RESULT=$(count_open_discoveries)
+assert_eq "count_open_discoveries no file" "0" "$RESULT"
+
+# Test write_commit_log
+TOTAL=$((TOTAL+1))
+echo -n "write_commit_log appends... "
+rm -f "$STATE_DIR/commits.log"
+write_commit_log "fixer" "abc12345" "fix login"
+if grep -q '"role":"fixer"' "$STATE_DIR/commits.log" 2>/dev/null && grep -q '"hash":"abc12345"' "$STATE_DIR/commits.log" 2>/dev/null; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+fi
+
+# Test state_summary
+TOTAL=$((TOTAL+1))
+echo -n "state_summary returns formatted... "
+rm -f "$STATE_DIR/commits.log" "$STATE_DIR/discoveries.jsonl"
+echo "line1" > "$STATE_DIR/commits.log"
+echo "line2" >> "$STATE_DIR/commits.log"
+RESULT=$(state_summary)
+if echo "$RESULT" | grep -q "commits:2"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (got: $RESULT)"; FAIL=$((FAIL+1))
+fi
+
+# Test reset_role_cycle
+TOTAL=$((TOTAL+1))
+echo -n "reset_role_cycle resets round file... "
+TEAM_NAME="default"
+TEAMMATE_NAME="testbot"
+_ROUND_FILE="${STATE_DIR}/round-${TEAM_NAME}-${TEAMMATE_NAME}"
+echo "5" > "$_ROUND_FILE"
+rm -f "$STATE_DIR/progress.log"
+reset_role_cycle "fixer" "5" "test_reset"
+if [ ! -f "$_ROUND_FILE" ]; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL (round file still exists)"; FAIL=$((FAIL+1))
+fi
+
+TOTAL=$((TOTAL+1))
+echo -n "reset_role_cycle writes progress... "
+if grep -q "test_reset" "$STATE_DIR/progress.log" 2>/dev/null; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+fi
 
 echo ""
 echo "=========================================="

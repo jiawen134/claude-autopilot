@@ -21,10 +21,16 @@ lint: ## Run ShellCheck static analysis
 	@$(SHELLCHECK) --severity=warning $(SCRIPTS) 2>&1 | head -30 || true
 
 # 单元测试
-test: ## Run unit tests
+test: ## Run unit and integration tests
 	@echo "=== Unit Tests ==="
 	@bash tests/test_common.sh
+	@echo ""
+	@echo "=== Integration Tests ==="
 	@bash tests/test_bin_scripts.sh
+	@echo ""
+	@echo "=========================================="
+	@echo "  All tests passed"
+	@echo "=========================================="
 
 # 清理状态（开发用）
 clean: ## Remove generated state files

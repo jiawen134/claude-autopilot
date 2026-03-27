@@ -21,17 +21,15 @@ INPUT=$(cat)
 TASK_SUBJECT=$(json_field "$INPUT" "task_subject" "unknown task")
 TASK_SUBJECT="$(printf '%s' "$TASK_SUBJECT" | tr -d '\000-\037\177')"
 TASK_SUBJECT="${TASK_SUBJECT:0:512}"
-TASK_SUBJECT="$(printf '%s' "$TASK_SUBJECT" | tr -d '\000-\037\177')"
-TASK_SUBJECT="${TASK_SUBJECT:0:512}"
-TASK_SUBJECT="$(printf '%s' "$TASK_SUBJECT" | tr -d '\000-\037\177')"
-TASK_SUBJECT="${TASK_SUBJECT:0:512}"
 TEAMMATE_NAME=$(json_field "$INPUT" "teammate_name" "unknown")
+TEAMMATE_ROLE=$(json_field "$INPUT" "teammate_role" "")
 TEAM_NAME=$(json_field "$INPUT" "team_name" "default")
 
 # Sanitize to prevent path traversal in file paths
 TEAMMATE_NAME="${TEAMMATE_NAME//[^a-zA-Z0-9_-]/}"
 TEAM_NAME="${TEAM_NAME//[^a-zA-Z0-9_-]/}"
 _LOG_PREFIX="$TEAMMATE_NAME"
+ROLE=$(detect_role "$TEAMMATE_NAME" "$TEAMMATE_ROLE")
 
 # ===== 重试计数 =====
 if command -v sha256sum &>/dev/null; then
@@ -49,12 +47,12 @@ MAX_RETRIES="${QUALITY_GATE_MAX_RETRIES:-5}"
 RETRY_COUNT=$(locked_read "$RETRY_FILE" "$LOCK_FILE")
 
 if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
-    log_warn "'$TASK_SUBJECT' 已被打回 ${MAX_RETRIES} 次。强制放行。"
+    log_warn "FORCE_PASS(${MAX_RETRIES}x): '${TASK_SUBJECT:0:60}'"
     rm -f "$RETRY_FILE"
     exit 0
 fi
 
-log_info "验证: $TASK_SUBJECT (${RETRY_COUNT}+1/${MAX_RETRIES})"
+log_info "GATE: '${TASK_SUBJECT:0:60}' (try ${RETRY_COUNT}+1/${MAX_RETRIES})"
 
 # ===== 检测项目 =====
 detect_project
@@ -75,15 +73,15 @@ if [ -n "${TEST_CMD:-}" ]; then
         if [ "$IS_INCR" = "yes" ]; then
             log_info "增量失败，跑全量确认..."
             if ! safe_run "$TEST_CMD" "$TMPDIR_GATE/test_full.txt"; then
-                log_error "全量测试也失败"
-                grep -iE "FAIL|ERROR|panic|assert" "$TMPDIR_GATE/test_full.txt" 2>/dev/null | head -15 >&2
-                tail -10 "$TMPDIR_GATE/test_full.txt" >&2
+                FC=$(grep -ciE "FAIL|ERROR" "$TMPDIR_GATE/test_full.txt" 2>/dev/null || echo "?")
+                FIRST_ERR=$(grep -m1 -iE "FAIL|ERROR|panic" "$TMPDIR_GATE/test_full.txt" 2>/dev/null || echo "unknown")
+                log_error "TEST_FAIL(full,${FC}): ${FIRST_ERR:0:80}"
                 FAILED=true
             fi
         else
-            log_error "测试失败"
-            grep -iE "FAIL|ERROR|panic|assert" "$TMPDIR_GATE/test.txt" 2>/dev/null | head -15 >&2
-            tail -10 "$TMPDIR_GATE/test.txt" >&2
+            FC=$(grep -ciE "FAIL|ERROR" "$TMPDIR_GATE/test.txt" 2>/dev/null || echo "?")
+            FIRST_ERR=$(grep -m1 -iE "FAIL|ERROR|panic" "$TMPDIR_GATE/test.txt" 2>/dev/null || echo "unknown")
+            log_error "TEST_FAIL(${FC}): ${FIRST_ERR:0:80}"
             FAILED=true
         fi
     fi
@@ -95,8 +93,8 @@ fi
 if [ "$FAILED" = false ] && [ -n "${LINT_CMD:-}" ]; then
     log_info "Lint: $LINT_CMD"
     if ! safe_run "$LINT_CMD" "$TMPDIR_GATE/lint.txt"; then
-        log_error "Lint 未通过"
-        head -20 "$TMPDIR_GATE/lint.txt" >&2
+        FIRST_LINT=$(grep -m1 -iE "error|warning|:" "$TMPDIR_GATE/lint.txt" 2>/dev/null || echo "unknown")
+        log_error "LINT_FAIL: ${FIRST_LINT:0:80}"
         FAILED=true
     fi
 fi
@@ -105,8 +103,8 @@ fi
 if [ "$FAILED" = false ] && [ -n "${TYPE_CMD:-}" ]; then
     log_info "类型检查: $TYPE_CMD"
     if ! safe_run "$TYPE_CMD" "$TMPDIR_GATE/type.txt"; then
-        log_error "类型检查未通过"
-        head -15 "$TMPDIR_GATE/type.txt" >&2
+        FIRST_TYPE=$(grep -m1 -iE "error|:" "$TMPDIR_GATE/type.txt" 2>/dev/null || echo "unknown")
+        log_error "TYPE_FAIL: ${FIRST_TYPE:0:80}"
         FAILED=true
     fi
 fi
@@ -117,14 +115,17 @@ OUTCOME="pass"
 [ "$FAILED" = true ] && OUTCOME="fail"
 
 track_usage "quality-gate" "$TEAMMATE_NAME" "" "$OUTCOME" "$DURATION" "$(jq -cn --arg t "$TASK_SUBJECT" --argjson r "$RETRY_COUNT" '{task:$t,retry:$r}')"
-write_teammate_status "$TEAMMATE_NAME" "" "quality-gate:$OUTCOME" "$TASK_SUBJECT" "gate" "0"
+write_teammate_status "$TEAMMATE_NAME" "$ROLE" "quality-gate:$OUTCOME" "$TASK_SUBJECT" 0 0
 
 if [ "$FAILED" = true ]; then
     locked_increment "$RETRY_FILE" "$LOCK_FILE" > /dev/null
-    log_warn "请修复后再标记完成。(第 $((RETRY_COUNT+1))/${MAX_RETRIES} 次打回)"
+    log_warn "BOUNCE(${RETRY_COUNT}+1/${MAX_RETRIES}): fix and retry"
     exit 2
 fi
 
 rm -f "$RETRY_FILE"
-log_info "通过！'$TASK_SUBJECT' 已验证。(${DURATION}s)"
+# Log successful task completion for state recovery
+LATEST_COMMIT=$(git log --oneline -1 2>/dev/null || echo "no-commit")
+write_commit_log "${ROLE}" "${LATEST_COMMIT%% *}" "$TASK_SUBJECT"
+log_info "PASS: '${TASK_SUBJECT:0:60}' (${DURATION}s)"
 exit 0
