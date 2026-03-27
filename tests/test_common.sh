@@ -97,11 +97,18 @@ assert_eq "unknown name" "unknown" "$(detect_role "Thomas" "")"
 assert_eq "case insensitive" "discoverer" "$(detect_role "QA-DISCOVERER" "")"
 # 关键：prefix 不应该匹配 fixer
 assert_eq "prefix should NOT match fixer" "unknown" "$(detect_role "prefix-handler" "")"
+assert_eq "ops maps to releaser" "releaser" "$(detect_role "devops-agent" "")"
+assert_eq "plan maps to strategist" "strategist" "$(detect_role "plan-maker" "")"
+assert_eq "architect maps to strategist" "strategist" "$(detect_role "system-architect" "")"
 
 echo ""
 echo "=== role_limit ==="
 assert_eq "fixer limit" "5" "$(role_limit "fixer")"
 assert_eq "discoverer limit" "3" "$(role_limit "discoverer")"
+assert_eq "reviewer limit" "3" "$(role_limit "reviewer")"
+assert_eq "designer limit" "2" "$(role_limit "designer")"
+assert_eq "releaser limit" "2" "$(role_limit "releaser")"
+assert_eq "strategist limit" "2" "$(role_limit "strategist")"
 # Unknown role should warn and return 1
 UNKNOWN_LIMIT=$(role_limit "bogus_role" 2>/dev/null)
 assert_eq "unknown role returns 1" "1" "$UNKNOWN_LIMIT"
@@ -306,6 +313,60 @@ detect_project
 cd "$_ORIG_DIR" || exit 1
 assert_eq "php project type" "php" "$PROJECT_TYPE"
 assert_contains "php TEST_CMD contains phpunit" "phpunit" "$TEST_CMD"
+
+echo ""
+echo "=== detect_project (ruby type) ==="
+RUBY_TMP="$TEST_TMP/proj-ruby"
+mkdir -p "$RUBY_TMP"
+printf 'source "https://rubygems.org"\ngem "rspec"\ngem "rubocop"\n' > "$RUBY_TMP/Gemfile"
+cd "$RUBY_TMP" || exit 1
+detect_project
+cd "$_ORIG_DIR" || exit 1
+assert_eq "ruby project type" "ruby" "$PROJECT_TYPE"
+
+echo ""
+echo "=== detect_project (swift type) ==="
+SWIFT_TMP="$TEST_TMP/proj-swift"
+mkdir -p "$SWIFT_TMP"
+touch "$SWIFT_TMP/Package.swift"
+cd "$SWIFT_TMP" || exit 1
+detect_project
+cd "$_ORIG_DIR" || exit 1
+assert_eq "swift project type" "swift" "$PROJECT_TYPE"
+assert_eq "swift TEST_CMD" "swift test" "$TEST_CMD"
+
+echo ""
+echo "=== detect_project (flutter type) ==="
+FLUTTER_TMP="$TEST_TMP/proj-flutter"
+mkdir -p "$FLUTTER_TMP"
+touch "$FLUTTER_TMP/pubspec.yaml"
+cd "$FLUTTER_TMP" || exit 1
+detect_project
+cd "$_ORIG_DIR" || exit 1
+assert_eq "flutter project type" "flutter" "$PROJECT_TYPE"
+assert_eq "flutter TEST_CMD" "flutter test" "$TEST_CMD"
+assert_eq "flutter LINT_CMD" "dart analyze" "$LINT_CMD"
+
+echo ""
+echo "=== detect_project (cpp-cmake type) ==="
+CMAKE_TMP="$TEST_TMP/proj-cmake"
+mkdir -p "$CMAKE_TMP"
+touch "$CMAKE_TMP/CMakeLists.txt"
+cd "$CMAKE_TMP" || exit 1
+detect_project
+cd "$_ORIG_DIR" || exit 1
+assert_eq "cpp-cmake project type" "cpp-cmake" "$PROJECT_TYPE"
+
+echo ""
+echo "=== detect_project (env var override) ==="
+ENV_TMP="$TEST_TMP/proj-env"
+mkdir -p "$ENV_TMP"
+touch "$ENV_TMP/Cargo.toml"
+cd "$ENV_TMP" || exit 1
+AGENT_TEAMS_TEST_CMD="custom-test" AGENT_TEAMS_LINT_CMD="custom-lint" detect_project
+cd "$_ORIG_DIR" || exit 1
+assert_eq "env override TEST_CMD" "custom-test" "$TEST_CMD"
+assert_eq "env override LINT_CMD" "custom-lint" "$LINT_CMD"
 
 # ===== State Persistence Tests =====
 echo ""
