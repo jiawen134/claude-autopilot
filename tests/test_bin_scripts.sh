@@ -183,6 +183,8 @@ KW_IDLE_PROJ="$TEST_TMP/kw-idle"
 mkdir -p "$KW_IDLE_PROJ/.claude/state"
 # Set idle counter to threshold-1, next invocation should trigger idle_done
 echo "2" > "$KW_IDLE_PROJ/.claude/state/idle-kwidle-idlebot"
+# Set idle timestamp to 120s ago (exceeds default IDLE_MIN_SECONDS=60)
+echo "$(( $(date +%s) - 120 ))" > "$KW_IDLE_PROJ/.claude/state/idle-ts-kwidle-idlebot"
 KW_IDLE_EXIT=0
 (export CLAUDE_PROJECT_DIR="$KW_IDLE_PROJ" AI_PIPELINE_MAX_ROUNDS=50 AI_PIPELINE_IDLE_THRESHOLD=3; \
  echo '{"teammate_name":"idlebot","team_name":"kwidle","teammate_role":"fixer"}' | bash "$KW") >/dev/null 2>&1 || KW_IDLE_EXIT=$?

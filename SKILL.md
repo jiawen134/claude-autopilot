@@ -186,6 +186,56 @@ line-length = 120
 
 安装完毕后告知用户已配置完成。
 
+### 2.5 补全 .gitignore
+
+检查项目 `.gitignore`，追加 Agent Teams 产物的忽略规则（只追加不存在的行）：
+
+```bash
+touch .gitignore
+for pattern in ".claude/state/" "playwright-report/" "test-results/" "*.tmp"; do
+    grep -qxF "$pattern" .gitignore 2>/dev/null || echo "$pattern" >> .gitignore
+done
+```
+
+### 2.6 Timeout 适配
+
+如果项目测试套件较慢（超过 2 分钟），需要在 `.claude/settings.json` 的 `env` 中调大超时：
+
+```json
+"env": {
+  "SAFE_RUN_TIMEOUT": "300"
+}
+```
+
+默认值是 120 秒。建议设为测试实际耗时的 2 倍。可以先跑一次测试计时：
+
+```bash
+time make test  # 或 npm test / pytest 等
+```
+
+### 2.7 权限配置
+
+用 AskUserQuestion 询问用户权限偏好：
+
+```
+Teammate 执行时需要 Edit/Write/Bash 权限。请选择权限模式：
+
+1. **逐个审批**（默认，安全）— 每个操作需要你确认
+2. **自动审批安全操作** — Read/Glob/Grep/测试命令自动通过，Edit/Write/Bash 仍需确认
+3. **全部自动审批**（快但有风险）— 所有操作自动通过，适合信任的项目
+
+推荐选 2，兼顾速度和安全。
+```
+
+如果用户选 2，在 `.claude/settings.json` 中添加：
+```json
+"permissions": {
+  "allow": ["Read", "Glob", "Grep", "Bash(make test)", "Bash(make lint)", "Bash(npm test)", "Bash(npm run lint)"]
+}
+```
+
+如果用户选 3，提醒风险后设置 `"defaultMode": "auto"`。
+
 ## 第三步：需求理解 & 智能路由
 
 ### 3.1 需求输入

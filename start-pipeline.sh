@@ -14,17 +14,6 @@
 
 set -euo pipefail
 
-# ============ 无 TTY 时自动包装进 tmux ============
-if ! tty -s 2>/dev/null && command -v tmux &>/dev/null; then
-    # 没有 TTY（如从 Claude Code Bash tool 后台启动），
-    # 自动创建 tmux session 来提供 TTY 环境
-    SESSION_NAME="agent-teams-$$"
-    tmux new-session -d -s "$SESSION_NAME" "$0 $*"
-    echo "No TTY detected. Started inside tmux session: $SESSION_NAME"
-    echo "Attach with: tmux attach -t $SESSION_NAME"
-    exit 0
-fi
-
 # ============ 颜色 ============
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -82,7 +71,7 @@ _lifecycle_rules() {
 Teammate 之间用 SendMessage 直接对话，不要只靠 Task 传话：
 - **reviewer → fixer**：审查发现问题，直接 SendMessage 告知（附文件名+行号+修复建议）
 - **discoverer → fixer**：P0 问题直接通知 fixer 优先处理
-- **Lead → 全体**：逐个 SendMessage 通知每个 Teammate（**不要用 to: "\*" 广播结构化消息，会报错**）
+- **Lead → 全体**：重要变更用 broadcast（to: "*"）通知所有 Teammate
 - **strategist → Lead**：架构方案就绪时发给 Lead 审批
 - **Lead → teammate**：用 SendMessage 分配任务、调整优先级、唤醒空闲 Teammate
 - Teammate 空闲（idle）是正常的——Lead 随时可以 SendMessage 唤醒并分配新工作
@@ -91,13 +80,6 @@ Teammate 之间用 SendMessage 直接对话，不要只靠 Task 传话：
 - 消息自动投递，不需要轮询 inbox——队友的消息会自动出现在你的对话里
 - Peer DM 可见性：teammate 之间 DM 时，idle 通知会包含摘要，Lead 不用回复这些摘要
 - **禁止**发结构化 JSON 状态消息（如 {type:"idle"} 或 {type:"task_completed"}），用纯文本 + TaskUpdate
-- **建议** Teammate 执行 skill 时，内部 spawn 的子 agent 不传 team_name，避免意外注册为团队成员导致 TeamDelete 失败。如需子 agent 与队友通信，由父 Teammate 转发
-
-### Idle 通知处理
-平台每次检测到 Teammate 空闲都会通知你（Lead），这是**正常行为**，不需要逐条回复：
-- 连续收到同一 Teammate 的 idle 通知 → 它暂时无事可做，不需要干预
-- 只在你有新工作要分配时才回应 idle 的 Teammate
-- Hook 会在连续 3 轮无事可做后自动停止该 Teammate，无需手动处理
 
 ### Task metadata
 创建 Task 时用 metadata 存结构化信息，方便排序和筛选：
@@ -118,13 +100,10 @@ Teammate 之间用 SendMessage 直接对话，不要只靠 Task 传话：
 
 ### 优雅关闭
 当所有目标完成或达到安全阀上限时：
-1. **逐个通知**：对每个 Teammate 分别 SendMessage 纯文本（**不要用 to: "\*" 发结构化消息，会报错**）
-   示例：SendMessage({ to: "discoverer", summary: "shutdown", message: "Pipeline complete. 请完成当前工作后停止，不要认领新任务。" })
-2. **写哨兵文件**：运行 touch .claude/state/shutdown-{team_name}（Hook 检测到后自动停止驱动）
-3. **备份 Task 数据**：cp -r ~/.claude/tasks/{team_name}/ .claude/state/tasks-backup/ （防止 TeamDelete 丢失记录）
-4. **等待 30 秒**：让 Hook 检测到哨兵并停止正在运行的 Teammate
-5. **TeamDelete**：调用 TeamDelete 清理团队。如果报 active members 错误，再等 30 秒重试一次
-6. **兜底**：如果重试仍失败，告知用户手动清理：rm -rf ~/.claude/teams/{team_name} ~/.claude/tasks/{team_name}
+1. Lead 向全体发 shutdown：SendMessage({ to: "*", message: { type: "shutdown_request", reason: "pipeline complete" } })
+2. 等待每个 Teammate 回复 shutdown_response（approve: true）
+3. 写哨兵文件：运行 touch .claude/state/shutdown-{team_name}（让 Hook 也停止）
+4. 调用 TeamDelete 清理团队目录（~/.claude/teams/ 和 ~/.claude/tasks/）
 
 开始！
 LIFECYCLE
@@ -282,8 +261,7 @@ PROMPT
 
     elif [ -n "$goal" ] && [ "$goal" != "--once" ]; then
         # [Fix #5] 目标模式也统一用 gstack skill
-        # Sanitize shell metacharacters from user-provided goal string
-        goal=$(printf '%s' "$goal" | tr -d '`$;|&(){}!<>\\')
+        goal=$(printf '%s' "$goal" | tr -d '`$')
         cat <<PROMPT
 你是 AI 全自动流水线的 Team Lead。目标：$goal
 

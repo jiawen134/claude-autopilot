@@ -68,8 +68,8 @@ fi
 REMAINING=$((PENDING + IN_PROGRESS))
 
 if [ "$REMAINING" -gt 0 ]; then
-    # 有任务 → 重置空闲计数器
-    rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
+    # 有任务 → 重置空闲计数器（含时间戳文件）
+    rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" "${STATE_DIR}/idle-ts-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
     write_teammate_status "$TEAMMATE_NAME" "$ROLE" "claiming_task" "${PENDING}p+${IN_PROGRESS}ip" "$CURRENT_ROUND" "$MAX_ROUNDS"
     log_info "[${ROLE}:R${CURRENT_ROUND}] ${PENDING}p+${IN_PROGRESS}ip tasks. Claiming next."
     track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "claim_task" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND}"
@@ -87,7 +87,7 @@ if [ -n "${TEST_CMD:-}" ]; then
     TEST_OUTPUT=$(cat "$_test_outfile" 2>/dev/null)
     rm -f "$_test_outfile"
     if [ "$TEST_EXIT" -ne 0 ]; then
-        rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
+        rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" "${STATE_DIR}/idle-ts-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
         write_teammate_status "$TEAMMATE_NAME" "$ROLE" "test_failed" "exit=$TEST_EXIT" "$CURRENT_ROUND" "$MAX_ROUNDS"
         FC=$(echo "$TEST_OUTPUT" | grep -ciE "FAIL|failed|error|panic" || echo "?")
         FIRST_ERR=$(echo "$TEST_OUTPUT" | grep -m1 -iE "FAIL|ERROR|panic" || echo "unknown")
@@ -116,21 +116,41 @@ fi
 
 # ===== 第2.5层：完成检测 =====
 # 没有待办任务 + 测试通过 + lint 通过 = 可能已经做完了
-# 连续 N 轮都是这个状态 → 建议停止（而不是无意义地继续轮转 skill）
+# 需要同时满足：次数 >= 阈值 AND 时间 >= 最小等待秒数，才认定真正空闲
+# 防止快速连续的 idle hook 调用误停正在等待新任务的 Teammate
 IDLE_FILE="${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}"
 IDLE_LOCK="${STATE_DIR}/lock-idle-${TEAM_NAME}-${TEAMMATE_NAME}"
+IDLE_TS_FILE="${STATE_DIR}/idle-ts-${TEAM_NAME}-${TEAMMATE_NAME}"
 IDLE_THRESHOLD="${AI_PIPELINE_IDLE_THRESHOLD:-3}"
 [[ "$IDLE_THRESHOLD" =~ ^[0-9]+$ ]] || { log_warn "Invalid IDLE_THRESHOLD='$IDLE_THRESHOLD', using 3"; IDLE_THRESHOLD=3; }
+IDLE_MIN_SECONDS="${AI_PIPELINE_IDLE_MIN_SECONDS:-60}"
+[[ "$IDLE_MIN_SECONDS" =~ ^[0-9]+$ ]] || { log_warn "Invalid IDLE_MIN_SECONDS='$IDLE_MIN_SECONDS', using 60"; IDLE_MIN_SECONDS=60; }
 
 IDLE_COUNT=$(locked_increment "$IDLE_FILE" "$IDLE_LOCK")
 
+# 第一次进入 idle 时记录时间戳
+if [ ! -f "$IDLE_TS_FILE" ]; then
+    date +%s > "$IDLE_TS_FILE"
+fi
+
 if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
-    # 连续 N 轮无事可做，通知 Lead 并停止
-    write_teammate_status "$TEAMMATE_NAME" "$ROLE" "idle_done" "no tasks for ${IDLE_COUNT} rounds, all green" "$CURRENT_ROUND" "$MAX_ROUNDS"
-    log_info "[${ROLE}:R${CURRENT_ROUND}] IDLE_DONE: no tasks + tests pass for ${IDLE_COUNT} rounds. Stopping."
-    write_progress "$ROLE" "$CURRENT_ROUND" "idle_done — no work for ${IDLE_COUNT} rounds"
+    # 次数够了，再检查时间：至少等够 IDLE_MIN_SECONDS 秒才停止
+    FIRST_IDLE_TS=$(cat "$IDLE_TS_FILE" 2>/dev/null || echo 0)
+    [[ "$FIRST_IDLE_TS" =~ ^[0-9]+$ ]] || FIRST_IDLE_TS=0
+    IDLE_ELAPSED=$(( $(date +%s) - FIRST_IDLE_TS ))
+
+    if [ "$IDLE_ELAPSED" -lt "$IDLE_MIN_SECONDS" ]; then
+        # 时间不够 → 继续等（不停止），给新任务到达的时间窗口
+        log_info "[${ROLE}:R${CURRENT_ROUND}] idle ${IDLE_COUNT}x / ${IDLE_ELAPSED}s < ${IDLE_MIN_SECONDS}s min, waiting"
+        exit 2
+    fi
+
+    # 次数 + 时间都满足 → 真正空闲，停止
+    write_teammate_status "$TEAMMATE_NAME" "$ROLE" "idle_done" "no tasks for ${IDLE_COUNT} rounds (${IDLE_ELAPSED}s), all green" "$CURRENT_ROUND" "$MAX_ROUNDS"
+    log_info "[${ROLE}:R${CURRENT_ROUND}] IDLE_DONE: no tasks + tests pass for ${IDLE_COUNT} rounds (${IDLE_ELAPSED}s). Stopping."
+    write_progress "$ROLE" "$CURRENT_ROUND" "idle_done — no work for ${IDLE_COUNT} rounds (${IDLE_ELAPSED}s)"
     track_usage "keep-working" "$TEAMMATE_NAME" "$ROLE" "idle_done" "$(($(date +%s)-START_TS))" "{\"round\":$CURRENT_ROUND,\"idle\":$IDLE_COUNT}"
-    rm -f "$IDLE_FILE"
+    rm -f "$IDLE_FILE" "$IDLE_TS_FILE"
     exit 0
 fi
 
@@ -167,6 +187,15 @@ case "$ROLE" in
         SKILL_MSG="${SKILLS[$((CURRENT_ROUND % ${#SKILLS[@]}))]}" ;;
     *)          SKILL_MSG="角色未识别，请检查任务列表" ;;
 esac
+
+# ===== 第 3.5 层：首轮注入队友名称（帮助 Teammate 发现 peer，减少 Lead 转发瓶颈）=====
+if [ "$CURRENT_ROUND" -eq 1 ]; then
+    TEAM_CONFIG="${HOME:-.}/.claude/teams/${TEAM_NAME}/config.json"
+    if [ -f "$TEAM_CONFIG" ] && command -v jq &>/dev/null; then
+        PEERS=$(jq -r '.members[]?.name // empty' "$TEAM_CONFIG" 2>/dev/null | grep -v "^${TEAMMATE_NAME}$" | tr '\n' ',' | sed 's/,$//')
+        [ -n "$PEERS" ] && log_info "[${ROLE}:R1] peers: ${PEERS}"
+    fi
+fi
 
 write_teammate_status "$TEAMMATE_NAME" "$ROLE" "working" "$SKILL_MSG" "$CURRENT_ROUND" "$MAX_ROUNDS"
 log_info "[${ROLE}:R${CURRENT_ROUND}] ${SKILL_MSG} | $(state_summary)"
