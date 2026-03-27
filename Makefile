@@ -1,6 +1,8 @@
 SHELL := /bin/bash
 SHELLCHECK := $(shell command -v shellcheck 2>/dev/null || echo "$(HOME)/.local/bin/shellcheck")
-SCRIPTS := lib/common.sh bin/quality-gate.sh bin/keep-working.sh bin/start-pipeline.sh bin/usage-report.sh bin/dashboard.sh .claude/lib/common.sh .claude/hooks/keep-working.sh .claude/hooks/quality-gate.sh
+# Source scripts (always present). Run 'make sync' first to populate .claude/ copies.
+SCRIPTS := lib/common.sh bin/quality-gate.sh bin/keep-working.sh bin/start-pipeline.sh bin/usage-report.sh bin/dashboard.sh
+SYNCED_SCRIPTS := .claude/lib/common.sh .claude/hooks/keep-working.sh .claude/hooks/quality-gate.sh
 
 .PHONY: help test lint syntax all clean sync
 
@@ -13,6 +15,7 @@ all: syntax lint test ## Run syntax check, lint, and tests
 syntax: ## Check bash syntax for all scripts
 	@echo "=== Bash Syntax Check ==="
 	@for f in $(SCRIPTS); do bash -n $$f && echo "  OK: $$f" || exit 1; done
+	@for f in $(SYNCED_SCRIPTS); do [ -f $$f ] && { bash -n $$f && echo "  OK: $$f" || exit 1; } || true; done
 
 # ShellCheck 静态分析
 lint: ## Run ShellCheck static analysis
