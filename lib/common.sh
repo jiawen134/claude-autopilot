@@ -409,9 +409,10 @@ init_state_dir() {
     STATE_DIR="$project_dir/.claude/state"
     mkdir -p "$STATE_DIR"
 
-    # 清理 7 天前的临时文件
+    # 清理 7 天前的临时文件（含日志轮转遗留的 *.tmp）
     find "${TMPDIR:-/tmp}" -maxdepth 1 -name "gate-*" -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
     find "$STATE_DIR" -name "tmp-*" -mtime +7 -delete 2>/dev/null || true
+    find "$STATE_DIR" -name "*.tmp" -mtime +1 -delete 2>/dev/null || true
 
     # 日志文件轮转：超过 10MB 时截断（所有可增长的状态文件）
     local _rotate_file

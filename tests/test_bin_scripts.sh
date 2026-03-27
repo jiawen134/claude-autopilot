@@ -297,6 +297,51 @@ SP_NOJQ_EXIT=0
 assert_eq "check_prerequisites exits 1 when jq missing" "1" "$SP_NOJQ_EXIT"
 
 
+
+# ===== quality-gate.sh incremental fallback =====
+echo ""
+echo "=== quality-gate.sh (incremental fallback path) ==="
+
+QG="$PROJECT_DIR/bin/quality-gate.sh"
+QG_INCR="$TEST_TMP/qg-incr"
+mkdir -p "$QG_INCR"
+
+# Both incremental and full tests fail — gate should exit 1
+QG_INCR_EXIT=0
+(
+    export CLAUDE_PROJECT_DIR="$QG_INCR"
+    export AGENT_TEAMS_TEST_CMD="false"
+    export AGENT_TEAMS_INCREMENTAL_TEST_CMD="false"
+    export AGENT_TEAMS_LINT_CMD=""
+    printf '{"event":"TaskCompleted","taskId":"T1","taskSubject":"test task","teammate":"fixer","team":"test-team"}\n'
+) | (
+    export CLAUDE_PROJECT_DIR="$QG_INCR"
+    export AGENT_TEAMS_TEST_CMD="false"
+    export AGENT_TEAMS_INCREMENTAL_TEST_CMD="false"
+    export AGENT_TEAMS_LINT_CMD=""
+    bash "$QG" 2>/dev/null
+) || QG_INCR_EXIT=$?
+assert_eq "incremental+full both fail → exit 2 (bounce)" "2" "$QG_INCR_EXIT"
+
+# Incremental fails but full passes — gate should exit 0
+QG_INCR2="$TEST_TMP/qg-incr2"
+mkdir -p "$QG_INCR2"
+QG_INCR2_EXIT=99
+(
+    export CLAUDE_PROJECT_DIR="$QG_INCR2"
+    export AGENT_TEAMS_TEST_CMD="true"
+    export AGENT_TEAMS_INCREMENTAL_TEST_CMD="false"
+    export AGENT_TEAMS_LINT_CMD=""
+    printf '{"event":"TaskCompleted","taskId":"T2","taskSubject":"test task","teammate":"fixer","team":"test-team"}\n'
+) | (
+    export CLAUDE_PROJECT_DIR="$QG_INCR2"
+    export AGENT_TEAMS_TEST_CMD="true"
+    export AGENT_TEAMS_INCREMENTAL_TEST_CMD="false"
+    export AGENT_TEAMS_LINT_CMD=""
+    bash "$QG" 2>/dev/null
+) && QG_INCR2_EXIT=0 || QG_INCR2_EXIT=$?
+assert_eq "incremental fails, full passes → exit 0" "0" "$QG_INCR2_EXIT"
+
 echo ""
 echo "=========================================="
 echo "  Results: $PASS passed, $FAIL failed, $TOTAL total"

@@ -58,6 +58,7 @@ TASK_DIR="${HOME:-.}/.claude/tasks/$TEAM_NAME"
 PENDING=0
 IN_PROGRESS=0
 if [ -d "$TASK_DIR" ]; then
+    # grep -rl counts files-with-match (one count per file even if status appears twice — malformed files)
     PENDING=$(grep -rl '"status"[[:space:]]*:[[:space:]]*"pending"' "$TASK_DIR/" 2>/dev/null | wc -l) || PENDING=0
     IN_PROGRESS=$(grep -rl '"status"[[:space:]]*:[[:space:]]*"in_progress"' "$TASK_DIR/" 2>/dev/null | wc -l) || IN_PROGRESS=0
     # Strip whitespace (wc -l may pad with spaces on some platforms)
