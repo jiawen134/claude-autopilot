@@ -34,6 +34,9 @@ NC='\033[0m'
 
 log() { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $1"; }
 
+# ============ Team Name（支持环境变量覆盖，避免同名目录冲突）============
+TEAM_NAME="${AGENT_TEAMS_TEAM_NAME:-$(basename "$PWD")}"
+
 # ============ 前置检查 ============
 check_prerequisites() {
     log "检查前置条件..."
@@ -75,7 +78,7 @@ _lifecycle_rules() {
 ## 生命周期管理
 
 ### 建队（第一步，在前置步骤中执行）
-在创建任何 Teammate 之前，先调用 TeamCreate（team_name 用项目目录名，如 "my-app"）。
+在创建任何 Teammate 之前，先调用 TeamCreate（team_name 见末尾 "Team Name" 段指定的名称）。
 创建 Teammate 时传 team_name 参数，让它们自动加入团队。
 
 ### 通信规则（SendMessage）
@@ -141,7 +144,7 @@ build_prompt() {
 
 前置：
 1. 运行 /careful 启用安全护栏
-2. 调用 TeamCreate 建队（team_name 用项目目录名）
+2. 调用 TeamCreate 建队（team_name 见末尾 Team Name 段）
 3. 检查 .claude/state/progress.log — 如果存在，读取最近进度（续接上次流水线）
 4. 检查 Task 列表 — 如果有未完成任务，优先分配给对应角色
 
@@ -289,7 +292,7 @@ PROMPT
 
 前置：
 1. 运行 /careful 启用安全护栏
-2. 调用 TeamCreate 建队（team_name 用项目目录名）
+2. 调用 TeamCreate 建队（team_name 见末尾 Team Name 段）
 
 ## 启动团队（4 个 Teammate，按角色分配模型）
 
@@ -331,7 +334,7 @@ PROMPT
 
 前置：
 1. 运行 /careful 启用安全护栏
-2. 调用 TeamCreate 建队（team_name 用项目目录名）
+2. 调用 TeamCreate 建队（team_name 见末尾 Team Name 段）
 
 创建 3 个 Teammate（按角色分配模型）：
 
@@ -356,6 +359,9 @@ PROMPT
 
     # 追加通用生命周期 & 通信规则（所有模式共享）
     _lifecycle_rules
+
+    # 追加 Team Name（在 heredoc 外，变量可展开）
+    printf '\n## Team Name\n使用 team_name: "%s"\n如果同名目录冲突，可通过 AGENT_TEAMS_TEAM_NAME 环境变量覆盖。\n' "$TEAM_NAME"
 }
 
 # ============ 主程序 ============
@@ -397,7 +403,7 @@ main() {
             log "Lead cycle ${lead_cycle}/${max_lead_cycles}"
 
             # Check shutdown sentinel before starting a new cycle
-            if [ -f ".claude/state/shutdown-$(basename "$PWD")" ]; then
+            if [ -f ".claude/state/shutdown-${TEAM_NAME}" ]; then
                 log "Shutdown sentinel detected. Stopping Lead loop."
                 break
             fi

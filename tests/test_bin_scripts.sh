@@ -288,8 +288,9 @@ chmod +x "$SP_NOJQ/fake-bin/claude"
 SP_NOJQ_EXIT=0
 (
   # shellcheck disable=SC2329 — invoked indirectly via export -f
+  # Hide both jq (to test) and tmux (to skip no-TTY auto-wrap that exits 0 before check_prerequisites)
   command() {
-    if [ "${1:-}" = "-v" ] && [ "${2:-}" = "jq" ]; then return 1; fi
+    if [ "${1:-}" = "-v" ] && { [ "${2:-}" = "jq" ] || [ "${2:-}" = "tmux" ]; }; then return 1; fi
     builtin command "$@"
   }
   export -f command
@@ -299,6 +300,53 @@ SP_NOJQ_EXIT=0
 assert_eq "check_prerequisites exits 1 when jq missing" "1" "$SP_NOJQ_EXIT"
 
 
+
+# ===== Cross-project installation (hooks at .claude/hooks/ with lib at .claude/lib/) =====
+echo ""
+echo "=== Cross-project installation ==="
+
+INSTALL_PROJ="$TEST_TMP/install-proj"
+mkdir -p "$INSTALL_PROJ/.claude/hooks" "$INSTALL_PROJ/.claude/lib" "$INSTALL_PROJ/.claude/state"
+cp "$PROJECT_DIR/bin/keep-working.sh" "$INSTALL_PROJ/.claude/hooks/keep-working.sh"
+cp "$PROJECT_DIR/bin/quality-gate.sh" "$INSTALL_PROJ/.claude/hooks/quality-gate.sh"
+cp "$PROJECT_DIR/lib/common.sh" "$INSTALL_PROJ/.claude/lib/common.sh"
+chmod +x "$INSTALL_PROJ/.claude/hooks/"*.sh
+
+# Test: keep-working.sh loads common.sh from installed .claude/lib/ path
+echo "2026-01-01T00:00:00Z" > "$INSTALL_PROJ/.claude/state/shutdown-insttest"
+INSTALL_KW_EXIT=0
+(export CLAUDE_PROJECT_DIR="$INSTALL_PROJ"; \
+ echo '{"teammate_name":"tester","team_name":"insttest","teammate_role":"fixer"}' \
+ | bash "$INSTALL_PROJ/.claude/hooks/keep-working.sh") >/dev/null 2>&1 || INSTALL_KW_EXIT=$?
+assert_eq "installed keep-working.sh loads common.sh from .claude/lib/" "0" "$INSTALL_KW_EXIT"
+
+# Test: quality-gate.sh loads common.sh from installed .claude/lib/ path
+INSTALL_QG_EXIT=0
+(export CLAUDE_PROJECT_DIR="$INSTALL_PROJ"; \
+ echo '{"teammate_name":"tester","team_name":"insttest","task_subject":"test"}' \
+ | bash "$INSTALL_PROJ/.claude/hooks/quality-gate.sh") >/dev/null 2>&1 || INSTALL_QG_EXIT=$?
+assert_eq "installed quality-gate.sh loads common.sh from .claude/lib/" "0" "$INSTALL_QG_EXIT"
+
+# Test: hooks FAIL without .claude/lib/common.sh (proves the fix is necessary)
+NOLIB_PROJ="$TEST_TMP/nolib-proj"
+mkdir -p "$NOLIB_PROJ/.claude/hooks" "$NOLIB_PROJ/.claude/state"
+cp "$PROJECT_DIR/bin/keep-working.sh" "$NOLIB_PROJ/.claude/hooks/keep-working.sh"
+chmod +x "$NOLIB_PROJ/.claude/hooks/keep-working.sh"
+# Intentionally NOT copying lib/common.sh
+echo "2026-01-01T00:00:00Z" > "$NOLIB_PROJ/.claude/state/shutdown-nolibtest"
+NOLIB_EXIT=0
+(export CLAUDE_PROJECT_DIR="$NOLIB_PROJ"; \
+ echo '{"teammate_name":"tester","team_name":"nolibtest","teammate_role":"fixer"}' \
+ | bash "$NOLIB_PROJ/.claude/hooks/keep-working.sh") >/dev/null 2>&1 || NOLIB_EXIT=$?
+# Should fail (exit != 0) because common.sh is missing
+TOTAL=$((TOTAL + 1))
+if [ "$NOLIB_EXIT" -ne 0 ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: hook fails without .claude/lib/common.sh (exit=$NOLIB_EXIT)"
+else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: hook should fail without .claude/lib/common.sh but got exit 0"
+fi
 
 # ===== quality-gate.sh incremental fallback =====
 echo ""

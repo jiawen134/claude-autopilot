@@ -56,9 +56,11 @@ echo "HAS_TESTS: $_HAS_TESTS"
 # 检测 Agent Teams 环境变量
 echo "AGENT_TEAMS: ${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-not_set}"
 
-# 检测已安装的 hooks
+# 检测已安装的 hooks（三件齐全才算 yes）
 _HAS_HOOKS="no"
-[ -f ".claude/hooks/keep-working.sh" ] && _HAS_HOOKS="yes"
+if [ -f ".claude/hooks/keep-working.sh" ] && [ -f ".claude/hooks/quality-gate.sh" ] && [ -f ".claude/lib/common.sh" ]; then
+    _HAS_HOOKS="yes"
+fi
 echo "HAS_HOOKS: $_HAS_HOOKS"
 
 # 检测 tmux / jq / claude CLI
@@ -68,6 +70,18 @@ _HAS_CLAUDE="no"; command -v claude >/dev/null 2>&1 && _HAS_CLAUDE="yes"
 echo "HAS_TMUX: $_HAS_TMUX"
 echo "HAS_JQ: $_HAS_JQ"
 echo "HAS_CLAUDE: $_HAS_CLAUDE"
+
+# 检测 gstack
+_HAS_GSTACK="no"
+{ [ -d "$HOME/.claude/skills/gstack" ] || [ -d ".claude/skills/gstack" ]; } && _HAS_GSTACK="yes"
+echo "HAS_GSTACK: $_HAS_GSTACK"
+
+# 检测 skill 源目录（安装时需要复制 hook 和 lib）
+_SKILL_DIR=""
+for _d in "$HOME/.claude/skills/agent-teams" ".claude/skills/agent-teams"; do
+    [ -f "$_d/lib/common.sh" ] && _SKILL_DIR="$_d" && break
+done
+echo "SKILL_DIR: ${_SKILL_DIR:-not_found}"
 ```
 
 ## 第一步：环境检查
@@ -78,24 +92,30 @@ echo "HAS_CLAUDE: $_HAS_CLAUDE"
 1. **HAS_GIT=yes** — 没有 git 仓库则先 `git init && git add -A && git commit -m "init"`
 2. **HAS_JQ=yes** — Hook 脚本依赖 jq，没有则提示安装：`sudo apt install jq` / `brew install jq`
 3. **HAS_CLAUDE=yes** — `start-pipeline.sh` 是 `claude --max-turns 50` 的包装脚本，需要 Claude Code CLI。没有则提示安装：参见 https://claude.ai/code
+4. **SKILL_DIR != not_found** — 安装 Hook 需要从 skill 源目录复制文件。如果找不到，提示用户确认 agent-teams skill 的安装路径
 
 ### 建议满足
-4. **HAS_TESTS=yes** — quality-gate.sh 需要测试。没有则建议先写基础测试
-5. **HAS_TMUX=yes** — 多 Teammate 并行需要 tmux。没有会用 in-process 模式
+5. **HAS_TESTS=yes** — quality-gate.sh 需要测试。没有则建议先写基础测试
+6. **HAS_TMUX=yes** — 多 Teammate 并行需要 tmux。没有会用 in-process 模式
+7. **HAS_GSTACK=yes** — Teammate 使用 gstack skill（/qa, /review, /browse 等）。没有则提示安装：`git clone https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup`
 
 ### 自动处理
-6. **AGENT_TEAMS=not_set** — 自动设置环境变量
-7. **HAS_HOOKS=no** — 自动安装 Hook 文件
+8. **AGENT_TEAMS=not_set** — 自动设置环境变量
+9. **HAS_HOOKS=no** — 自动安装 Hook 文件
 
 如果有必须条件不满足，用 AskUserQuestion 确认后再继续。
 
 ## 第二步：安装 Hook 配置
 
-如果 `HAS_HOOKS=no`，执行以下安装：
+如果 `HAS_HOOKS=no`（首次安装或安装不完整），执行以下安装。
+
+如果 `HAS_HOOKS=yes` 但用户明确要求重装（如"重新安装 hooks"），也执行安装（覆盖旧文件）。
 
 ### 2.1 创建 .claude/settings.json
 
 根据项目是否已有 `.claude/settings.json`，**合并**（不覆盖）以下配置：
+
+根据 `HAS_TMUX` 决定 `teammateMode`：`HAS_TMUX=yes` → `"tmux"`，`HAS_TMUX=no` → `"process"`。
 
 ```json
 {
@@ -130,25 +150,35 @@ echo "HAS_CLAUDE: $_HAS_CLAUDE"
 }
 ```
 
-如果已有 settings.json，只合并 `hooks` 和 `env` 字段，保留其他已有配置。
+如果已有 settings.json，按以下策略合并（不覆盖）：
+- `env`：逐个 key 合并，已有的 key 不覆盖
+- `hooks.TeammateIdle`：如果已有该数组，**追加**新 hook 到数组末尾；如果没有，创建新数组
+- `hooks.TaskCompleted`：同上，追加而不是替换
+- `teammateMode`：如果 `HAS_TMUX=yes` 设为 `"tmux"`，否则设为 `"process"`（in-process 模式）。如果已有值则保留
+- 其他字段（permissions 等）：保留已有值不动
 
-### 2.2 安装 Hook 脚本
+### 2.2 安装 Hook 脚本和共享库
 
-从 skill 目录复制 Hook 脚本到项目：
+从 skill 目录复制 Hook 脚本和共享库到项目（使用 Preamble 输出的 `SKILL_DIR` 路径）：
 
 ```bash
-mkdir -p .claude/hooks
-cp "${CLAUDE_SKILL_DIR}/bin/keep-working.sh" .claude/hooks/keep-working.sh
-cp "${CLAUDE_SKILL_DIR}/bin/quality-gate.sh" .claude/hooks/quality-gate.sh
+mkdir -p .claude/hooks .claude/lib
+cp "${SKILL_DIR}/bin/keep-working.sh" .claude/hooks/keep-working.sh
+cp "${SKILL_DIR}/bin/quality-gate.sh" .claude/hooks/quality-gate.sh
+cp "${SKILL_DIR}/lib/common.sh" .claude/lib/common.sh
 chmod +x .claude/hooks/keep-working.sh .claude/hooks/quality-gate.sh
 ```
+
+> **关键**：`lib/common.sh` 是两个 Hook 的核心依赖。Hook 通过 `$(dirname "$SCRIPT_DIR")/lib/common.sh` 定位，即 `.claude/lib/common.sh`。缺少此文件会导致 Hook 启动即崩溃。
 
 ### 2.3 安装启动脚本
 
 ```bash
-cp "${CLAUDE_SKILL_DIR}/bin/start-pipeline.sh" ./start-pipeline.sh
-chmod +x start-pipeline.sh
+cp "${SKILL_DIR}/bin/start-pipeline.sh" .claude/start-pipeline.sh
+chmod +x .claude/start-pipeline.sh
 ```
+
+> 安装到 `.claude/` 目录而非项目根目录，避免污染项目。运行方式：`.claude/start-pipeline.sh`
 
 ### 2.4 项目类型适配
 
@@ -170,7 +200,7 @@ chmod +x start-pipeline.sh
 | cpp-cmake | CMakeLists.txt | ctest | - |
 | makefile | Makefile (有 test:) | make test | make lint |
 
-**Python 项目特殊处理**：如果没有 pyproject.toml 且没有 ruff：
+**Python 项目特殊处理**：如果没有 pyproject.toml 且没有 ruff，用 AskUserQuestion 确认后再创建：
 ```toml
 [project]
 name = "项目名"
@@ -188,11 +218,11 @@ line-length = 120
 
 ### 2.5 补全 .gitignore
 
-检查项目 `.gitignore`，追加 Agent Teams 产物的忽略规则（只追加不存在的行）：
+用 AskUserQuestion 确认后，追加 Agent Teams 产物的忽略规则（只追加不存在的行）：
 
 ```bash
 touch .gitignore
-for pattern in ".claude/state/" "playwright-report/" "test-results/" "*.tmp"; do
+for pattern in ".claude/state/" ".claude/start-pipeline.sh" "playwright-report/" "test-results/" "*.tmp"; do
     grep -qxF "$pattern" .gitignore 2>/dev/null || echo "$pattern" >> .gitignore
 done
 ```
@@ -235,6 +265,17 @@ Teammate 执行时需要 Edit/Write/Bash 权限。请选择权限模式：
 ```
 
 如果用户选 3，提醒风险后设置 `"defaultMode": "auto"`。
+
+### 2.8 Team Name 配置
+
+默认使用项目目录名作为 team_name（如 `my-app`）。如果有多个同名目录的项目可能同时运行 Agent Teams，需要设置唯一名称：
+
+在 `.claude/settings.json` 的 `env` 中添加：
+```json
+"AGENT_TEAMS_TEAM_NAME": "my-app-unique"
+```
+
+Team name 影响范围：`~/.claude/teams/<name>/`、`~/.claude/tasks/<name>/`、`.claude/state/shutdown-<name>`。不同项目如果同名目录会导致状态互相干扰。
 
 ## 第三步：需求理解 & 智能路由
 
@@ -302,7 +343,7 @@ Write 工具写入 `.claude/state/requirements.md`。这个文件是所有 Teamm
 
 **极小需求（一眼看完就能判断）**：直接拆 1-2 个任务，跳到 3.5。
 
-**小/中/大需求**：用 Agent tool 启动 1 个 strategist（model: opus, subagent_type: planner）做正式规划：
+**小/中/大需求**：用 Agent tool 启动 1 个 strategist（model: opus, subagent_type: general-purpose）做正式规划：
 
 strategist 的规划流程：
 1. **读需求**：读 `.claude/state/requirements.md`
@@ -327,9 +368,9 @@ strategist 的规划流程：
 | 规模 | 任务数 | 团队配置 | 执行方式 |
 |------|--------|---------|---------|
 | **极小** | 1-2 | fixer(Opus) 单人 | 当前会话直接 Agent 完成 + 审查 |
-| **小** | 3-5 | discoverer + fixer + reviewer（3 人） | `./start-pipeline.sh "需求摘要"` |
-| **中** | 5-10 | strategist + fixer + reviewer + releaser（4 人） | `./start-pipeline.sh "需求摘要"` |
-| **大** | 10+ | 全部 6 人 | `./start-pipeline.sh --continuous` |
+| **小** | 3-5 | discoverer + fixer + reviewer（3 人） | `.claude/start-pipeline.sh "需求摘要"` |
+| **中** | 5-10 | strategist + fixer + reviewer + releaser（4 人） | `.claude/start-pipeline.sh "需求摘要"` |
+| **大** | 10+ | 全部 6 人 | `.claude/start-pipeline.sh --continuous` |
 
 用 AskUserQuestion 展示方案并确认：
 
@@ -369,8 +410,8 @@ Teammate 启动后首先读 `.claude/state/requirements.md` 和 `.claude/state/p
 
 检查项目根目录是否有 CLAUDE.md。如果没有，创建一个包含：
 
-1. gstack skill 清单（从 gstack 目录自动检测可用 skill）
-2. 6 个 Teammate 分工表
+1. **如果 HAS_GSTACK=yes**：gstack skill 清单（从 gstack 目录自动检测可用 skill）+ 6 个 Teammate 分工表（含 gstack skill 映射）
+2. **如果 HAS_GSTACK=no**：Teammate 分工表中只列 Claude Code 内置能力（Read/Write/Edit/Bash/Agent），不列 gstack skill。注明 "安装 gstack 后可解锁 /qa, /review, /browse 等高级能力"
 3. 质量标准
 4. Lead 负责的 skill 列表
 
@@ -380,10 +421,11 @@ Teammate 启动后首先读 `.claude/state/requirements.md` 和 `.claude/state/p
 
 如果用户说 "卸载 agent-teams" / "remove agent-teams"：
 1. 删除 `.claude/hooks/keep-working.sh` 和 `.claude/hooks/quality-gate.sh`
-2. 从 `.claude/settings.json` 移除 TeammateIdle 和 TaskCompleted hooks
-3. 删除 `start-pipeline.sh`
-4. 清理 `.claude/state/shutdown-*` 哨兵文件
-5. 保留 CLAUDE.md（用户可能已修改）
+2. 删除 `.claude/lib/common.sh`（如果 `.claude/lib/` 目录为空则一并删除）
+3. 从 `.claude/settings.json` 移除 TeammateIdle 和 TaskCompleted hooks，移除 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 环境变量
+4. 删除 `.claude/start-pipeline.sh`
+5. 清理 `.claude/state/shutdown-*` 哨兵文件
+6. 保留 CLAUDE.md（用户可能已修改）
 
 ## 成本提醒
 
