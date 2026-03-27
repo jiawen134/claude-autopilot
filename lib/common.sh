@@ -302,7 +302,7 @@ detect_project() {
     elif [ -f "pom.xml" ]; then
         PROJECT_TYPE="java-maven"
         TEST_CMD="mvn test -q"
-        LINT_CMD="mvn checkstyle:check -q 2>/dev/null || true"
+        LINT_CMD="mvn checkstyle:check -q 2>/dev/null || true"  # || true: checkstyle is optional; missing plugin should not block the gate
 
     elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
         PROJECT_TYPE="java-gradle"

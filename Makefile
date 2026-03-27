@@ -20,8 +20,8 @@ syntax: ## Check bash syntax for all scripts
 # ShellCheck 静态分析
 lint: ## Run ShellCheck static analysis
 	@echo "=== ShellCheck ==="
-	@$(SHELLCHECK) --severity=error $(SCRIPTS) && echo "  PASS: no errors" || exit 1
-	@$(SHELLCHECK) --severity=warning $(SCRIPTS) 2>&1 | head -30 || true
+	@$(SHELLCHECK) -x -P lib --severity=error $(SCRIPTS) && echo "  PASS: no errors" || exit 1
+	@$(SHELLCHECK) -x -P lib --severity=warning $(SCRIPTS) 2>&1 | head -30 || true
 
 # 单元测试
 test: ## Run unit and integration tests
@@ -44,6 +44,6 @@ sync: ## Copy bin/ to .claude/hooks/ and lib/ to .claude/lib/
 	@mkdir -p .claude/hooks .claude/lib
 	@cp bin/quality-gate.sh .claude/hooks/quality-gate.sh
 	@cp bin/keep-working.sh .claude/hooks/keep-working.sh
-	@cp lib/common.sh .claude/lib/common.sh
+	@cp lib/common.sh .claude/lib/common.sh  # .claude/lib/ is for when hooks are installed outside the project root; hooks installed in-project source from lib/ directly
 	@cp bin/dashboard.sh .claude/dashboard.sh
 	@echo "  Synced bin/ -> .claude/hooks/ and lib/ -> .claude/lib/"
