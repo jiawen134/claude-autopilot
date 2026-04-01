@@ -220,7 +220,7 @@ mkdir -p "$UR_EMPTY/.claude/state"
 UR_EMPTY_OUTPUT=$(CLAUDE_PROJECT_DIR="$UR_EMPTY" bash "$UR" 2>/dev/null)
 UR_EMPTY_EXIT=$?
 assert_eq "exits 0 with no usage file" "0" "$UR_EMPTY_EXIT"
-assert_contains "no data message shown" "没有用量数据" "$UR_EMPTY_OUTPUT"
+assert_contains "no data message shown" "No usage data" "$UR_EMPTY_OUTPUT"
 
 # Test: exits 0 and generates report with usage data
 UR_DATA="$TEST_TMP/ur-data"

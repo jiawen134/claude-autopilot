@@ -18,7 +18,7 @@ set -euo pipefail
 if ! tty -s 2>/dev/null && command -v tmux &>/dev/null; then
     # 没有 TTY（如从 Claude Code Bash tool 后台启动），
     # 自动创建 tmux session 来提供 TTY 环境
-    SESSION_NAME="agent-teams-$$"
+    SESSION_NAME="claude-autopilot-$$"
     tmux new-session -d -s "$SESSION_NAME" "$0 $*"
     echo "No TTY detected. Started inside tmux session: $SESSION_NAME"
     echo "Attach with: tmux attach -t $SESSION_NAME"
@@ -133,6 +133,83 @@ Teammate 之间用 SendMessage 直接对话，不要只靠 Task 传话：
 LIFECYCLE
 }
 
+# ============ 工程纪律（Superpowers 融合）============
+_discipline_rules() {
+    cat <<'DISCIPLINE'
+
+## 工程纪律（Superpowers 融合）
+
+以下铁律按角色适用，所有 Teammate 必须遵守。违反铁律 = 返工。
+
+### 全员通用：验证铁律
+完成任何工作前，执行验证循环：
+1. **确定** — 什么命令能证明你的声明？
+2. **执行** — 跑完整命令（不用旧结果）
+3. **读取** — 看完整输出 + 退出码
+4. **确认** — 结果支持你的声明后才能标完成
+⛔ 禁止说"应该没问题"、"大概可以"、"看起来对了"
+⛔ 不用 should / probably / seems to 等模糊词
+
+### fixer 铁律
+
+**收到审查反馈时：**
+- 先读完全部反馈再动手（部分理解 = 错误实现）
+- 有技术理由可以 pushback："Won't fix: [原因]"
+- 回应只用 "Fixed" 或 "Won't fix: [原因]"，禁止客套话
+- 验证反馈的技术正确性后再实现，不盲从
+
+**TDD（测试驱动开发）— 先写测试，永远如此：**
+1. RED — 先写一个会失败的测试，运行确认失败
+2. GREEN — 写最少的代码让测试通过
+3. REFACTOR — 清理代码，保持测试绿色
+⛔ 没有失败测试 → 不许写生产代码
+⛔ 先写了代码 → 删掉，从测试重来
+⛔ "太简单不需要测试" → 错，简单的地方最容易出隐藏假设
+
+**系统化调试（遇 bug 必走四阶段，禁止跳步）：**
+1. 根因调查 — 读错误消息、复现、查 git diff、在组件边界加诊断日志
+2. 模式分析 — 找类似的正常代码，逐项对比差异
+3. 假设验证 — 一次只改一个变量，验证结果
+4. 实现修复 — 先写失败测试，再修代码
+⛔ Iron Law: no fixes without root cause investigation
+⛔ 3 次修不好 → 质疑架构本身，不要继续修症状
+
+### reviewer 铁律
+
+**结构化审查（每次审查三维度）：**
+1. 需求对齐 — 实现是否符合 requirements.md / plan.md？偏差是否有技术理由？
+2. 代码质量 — 命名、错误处理、测试覆盖、边界情况、TDD 是否被遵守
+3. 架构 — SOLID、关注点分离、可扩展性
+
+**问题分级：**
+- **Critical** — 阻断，必须修完才能继续
+- **Important** — 下个 commit 前必须修
+- **Minor** — 记录即可，稍后修
+
+**反馈风格：** 直接说技术问题 + 文件名 + 行号 + 修复建议。
+⛔ 禁止"Great point!"等客套话，只需 "Fixed" 或 "Won't fix: [原因]"
+
+### strategist 铁律
+
+**设计探索（头脑风暴）：**
+- 对非 trivial 需求，必须提出 2-3 种方案 + trade-offs
+- 写设计文档到 .claude/state/design-spec.md
+- ⛔ 未经 Lead 或用户批准设计 → 不许进入详细规划
+
+**YAGNI（复杂度控制）：**
+- 删掉不需要的功能比加上一个功能更有价值
+- 三行重复代码好过过早抽象
+- 不要为假想的未来需求设计
+- 每加一个概念都要问：现在真的需要吗？
+
+**计划质量：**
+- 每个任务 2-5 分钟，含确切文件路径 + 代码示例 + 验证命令
+- TDD 结构：每个任务 = 写测试 → 验证失败 → 实现 → 验证通过 → commit
+- ⛔ 零占位符：禁用"添加适当错误处理"、"实现相关逻辑"等模糊描述
+- 自检：每个需求有对应任务？函数名跨任务一致？所有任务有验证命令？
+DISCIPLINE
+}
+
 # ============ 构建启动 Prompt ============
 build_prompt() {
     local goal="${1:-}"
@@ -203,6 +280,8 @@ reviewer 每次只审查最新的 `git diff`，不要重新审查整个代码库
 - /browse — 修复后在浏览器中验证效果
 工作方式：
 - 按优先级从高到低认领 Task
+- ⚡ **TDD 铁律**：先写失败测试 → 写最小实现 → 重构（见末尾"工程纪律"）
+- ⚡ **调试四阶段**：根因 → 模式分析 → 假设验证 → 修复（禁止跳步）
 - 先 /investigate 确认根因，再写修复代码
 - 每修一个问题，单独 git commit（粒度极小）
 - 修完用 /browse 在浏览器里验证
@@ -216,6 +295,8 @@ reviewer 每次只审查最新的 `git diff`，不要重新审查整个代码库
 - /codex — 用 OpenAI Codex 做独立第二意见审查（交叉验证）
 工作方式：
 - 修复者每次提交后，运行 /review
+- ⚡ **结构化审查三维度**：需求对齐 → 代码质量 → 架构（见末尾"工程纪律"）
+- ⚡ **检查 fixer 是否遵守 TDD**：有生产代码变更但没有对应测试 → Critical issue
 - 每 5 次提交后，运行 /cso 做一次安全扫描
 - 发现问题创建 P0/P1 Task
 - 可选：/codex 对关键修复做交叉模型审查
@@ -254,6 +335,8 @@ reviewer 每次只审查最新的 `git diff`，不要重新审查整个代码库
 - /autoplan — 一键跑完 CEO→设计→工程 三轮审查
 - /retro — 周度复盘（提交统计、测试健康、改进趋势）
 工作方式：
+- ⚡ **设计探索**：对非 trivial 需求提出 2-3 种方案 + trade-offs（见末尾"工程纪律"）
+- ⚡ **计划粒度**：每个任务 2-5 分钟 + TDD 结构 + 零占位符
 - 第1轮：/autoplan 对当前项目状态做全面审查
 - 生成战略级 Task（架构改进、技术债务、产品方向）
 - 每轮结束：/retro 生成复盘报告
@@ -293,22 +376,58 @@ PROMPT
 前置：
 1. 运行 /careful 启用安全护栏
 2. 调用 TeamCreate 建队（team_name 见末尾 Team Name 段）
+3. 读取 .claude/state/progress.md — 如果存在，找到"下一步"继续（续接上次流水线）
+4. 读取 .claude/state/plan.md — 了解全部任务拆解
+
+## ⛔ 关键规则：一次性创建全部 Task（防 compaction 丢失）
+
+Lead 的 context 会被自动压缩（compaction），压缩后你会忘记未创建的任务。
+因此必须在启动时**一次性把 plan.md 中的所有任务都创建为 Task**。
+
+具体做法：
+1. 读 .claude/state/plan.md，提取全部任务列表
+2. 读 .claude/state/progress.md，跳过已完成的任务
+3. 对每个未完成任务调用 TaskCreate，用 blockedBy 设置依赖关系
+4. 确认所有任务都已创建后，再 spawn Teammates 开始工作
+5. ⛔ 绝不分批创建——必须一次全部创建完
+
+即使任务很多（20-30个），也必须全部创建。Task 系统不在你的 context 里，
+不会被 compaction 清除。这是唯一可靠的进度追踪方式。
+
+## 进度 Checkpoint（防 compaction 丢失）
+
+每当一个 Phase 完成（该 Phase 所有 Task 都 completed），你必须：
+1. 更新 .claude/state/progress.md，记录：
+   - 哪些 Phase/Task 已完成
+   - 当前正在进行的 Phase
+   - 下一步要做什么
+2. 这个文件在 compaction 后仍然可读，是你恢复记忆的唯一来源
+
+如果你发现自己不知道该做什么（通常是 compaction 后），立刻：
+1. 读 .claude/state/progress.md
+2. 读 .claude/state/plan.md
+3. TaskList 查看当前任务状态
+4. 根据以上信息继续工作
 
 ## 启动团队（4 个 Teammate，按角色分配模型）
 
 ### Teammate 1: 架构师 (strategist) — model: opus
 - 运行 /office-hours 梳理需求
+- ⚡ 提出 2-3 种方案 + trade-offs，写入 .claude/state/design-spec.md
 - 运行 /plan-eng-review 设计架构
-- 将实现计划拆分为可执行的 Tasks
+- 将实现计划拆分为可执行的 Tasks（TDD 结构 + 零占位符）
 
 ### Teammate 2: 开发者 (fixer) — model: opus
 - 认领 Tasks，写代码实现
+- ⚡ TDD 铁律：先写失败测试 → 最小实现 → 重构
+- ⚡ 调试四阶段：根因 → 分析 → 假设 → 修复
 - 每个功能点独立 commit
 - 用 /investigate 排查问题
 - 用 /browse 验证效果
 
 ### Teammate 3: 质量官 (reviewer) — model: opus
-- /review 审查每个提交
+- /review 审查每个提交（三维度：需求对齐 → 代码质量 → 架构）
+- ⚡ 检查 fixer 是否遵守 TDD，无测试的代码变更 = Critical issue
 - /cso 安全扫描
 - /qa 浏览器端到端测试
 - 发现问题创建新 Task
@@ -345,11 +464,13 @@ PROMPT
 
 ### Teammate 2: 修复者 (fixer) — model: opus
 - 认领 Tasks，修复代码
+- ⚡ TDD 铁律：先写失败测试 → 最小实现 → 重构
 - 每个问题独立 commit
 - /browse 验证修复效果
 
 ### Teammate 3: 审查者 (reviewer) — model: opus
-- /review 代码审查
+- /review 代码审查（三维度：需求对齐 → 代码质量 → 架构）
+- ⚡ 无测试的代码变更 = Critical issue
 - /cso 安全检查
 - 确认后 /document-release 更新文档
 
@@ -359,6 +480,9 @@ PROMPT
 
     # 追加通用生命周期 & 通信规则（所有模式共享）
     _lifecycle_rules
+
+    # 追加工程纪律（Superpowers 融合）
+    _discipline_rules
 
     # 追加 Team Name（在 heredoc 外，变量可展开）
     printf '\n## Team Name\n使用 team_name: "%s"\n如果同名目录冲突，可通过 AGENT_TEAMS_TEAM_NAME 环境变量覆盖。\n' "$TEAM_NAME"
@@ -408,7 +532,7 @@ main() {
                 break
             fi
 
-            claude --max-turns 50 "$PROMPT" || true
+            claude --model claude-opus-4-6 --max-turns 50 "$PROMPT" || true
 
             log "Lead session ended. Teammates continue via hooks."
             sleep 2
@@ -416,7 +540,7 @@ main() {
         log "Lead loop 完成 (${lead_cycle} cycles)"
     else
         # Single-run modes: one Lead session
-        claude --max-turns 50 "$PROMPT"
+        claude --model claude-opus-4-6 --max-turns 50 "$PROMPT"
     fi
 
     log "流水线结束"

@@ -114,6 +114,21 @@ if [ -n "${LINT_CMD:-}" ]; then
     fi
 fi
 
+# ===== 第2.3层：progress.md 检查 =====
+# Task 队列为空但 progress.md 显示还有未完成的 Phase → 不要 idle，提醒 Lead 创建新 Task
+PROGRESS_FILE="${PROJECT_DIR}/.claude/state/progress.md"
+if [ -f "$PROGRESS_FILE" ]; then
+    # 检查 progress.md 是否标记了"还有未完成的工作"
+    HAS_REMAINING=$(grep -ciE "TODO|pending|remaining|未完成|下一步|Phase.*未|next" "$PROGRESS_FILE" 2>/dev/null || echo "0")
+    HAS_REMAINING="${HAS_REMAINING// /}"
+    if [ "$HAS_REMAINING" -gt 0 ]; then
+        rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" "${STATE_DIR}/idle-ts-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
+        write_teammate_status "$TEAMMATE_NAME" "$ROLE" "waiting_for_tasks" "progress.md shows remaining work" "$CURRENT_ROUND" "$MAX_ROUNDS"
+        log_info "[${ROLE}:R${CURRENT_ROUND}] Task queue empty but progress.md shows remaining work. Nudging Lead."
+        exit 2
+    fi
+fi
+
 # ===== 第2.5层：完成检测 =====
 # 没有待办任务 + 测试通过 + lint 通过 = 可能已经做完了
 # 需要同时满足：次数 >= 阈值 AND 时间 >= 最小等待秒数，才认定真正空闲
@@ -172,7 +187,7 @@ case "$ROLE" in
     discoverer)
         SKILLS=("/qa — 系统化浏览器测试" "/benchmark — 性能回归检测" "/qa-only — 只出报告" "/investigate — 根因分析")
         SKILL_MSG="${SKILLS[$((CURRENT_ROUND % ${#SKILLS[@]}))]}" ;;
-    fixer)      SKILL_MSG="/investigate 扫描遗漏 + /browse 验证" ;;
+    fixer)      SKILL_MSG="/investigate 扫描遗漏 + /browse 验证 | TDD: 先写测试再写代码" ;;
     reviewer)
         SKILLS=("/review — 代码审查" "/cso — 安全审计" "/codex — 交叉审查")
         SKILL_MSG="${SKILLS[$((CURRENT_ROUND % ${#SKILLS[@]}))]}" ;;

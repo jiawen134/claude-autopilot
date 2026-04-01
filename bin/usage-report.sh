@@ -10,7 +10,7 @@ STATE_DIR="$PROJECT_DIR/.claude/state"
 USAGE_FILE="$STATE_DIR/usage.jsonl"
 
 if [ ! -f "$USAGE_FILE" ]; then
-    echo "没有用量数据。运行 /agent-teams 后会自动记录。"
+    echo "No usage data. Run /claude-autopilot to start recording."
     exit 0
 fi
 
