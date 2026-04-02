@@ -672,3 +672,27 @@ generate_recovery_context() {
 
     printf '%b' "$ctx"
 }
+
+# ===== Task Busy Check =====
+# Check if a teammate already has an in_progress task (prevents claiming multiple)
+# Usage: if is_teammate_busy "$teammate_name" "$team_name"; then skip; fi
+
+is_teammate_busy() {
+    local teammate="${1:-}" team="${2:-default}"
+    local task_dir="${HOME:-.}/.claude/tasks/$team"
+
+    [ -d "$task_dir" ] || return 1
+
+    # Look for any task owned by this teammate that is in_progress
+    local busy_count
+    busy_count=$(grep -rl "\"owner\"" "$task_dir/" 2>/dev/null | while IFS= read -r f; do
+        local owner status
+        owner=$(jq -r '.owner // ""' "$f" 2>/dev/null)
+        status=$(jq -r '.status // ""' "$f" 2>/dev/null)
+        if [ "$owner" = "$teammate" ] && [ "$status" = "in_progress" ]; then
+            echo "busy"
+        fi
+    done | head -1)
+
+    [ "$busy_count" = "busy" ]
+}

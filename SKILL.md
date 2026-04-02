@@ -185,6 +185,29 @@ echo "SKILL_DIR: ${_SKILL_DIR:-not_found}"
           }
         ]
       }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/permission-gate.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": ".env|package.json|Cargo.toml|go.mod|pyproject.toml|pom.xml|build.gradle",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/file-changed.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
@@ -208,6 +231,8 @@ cp "${SKILL_DIR}/bin/quality-gate.sh" .claude/hooks/quality-gate.sh
 cp "${SKILL_DIR}/bin/pre-compact.sh" .claude/hooks/pre-compact.sh
 cp "${SKILL_DIR}/bin/session-start.sh" .claude/hooks/session-start.sh
 cp "${SKILL_DIR}/bin/subagent-stop.sh" .claude/hooks/subagent-stop.sh
+cp "${SKILL_DIR}/bin/permission-gate.sh" .claude/hooks/permission-gate.sh
+cp "${SKILL_DIR}/bin/file-changed.sh" .claude/hooks/file-changed.sh
 cp "${SKILL_DIR}/lib/common.sh" .claude/lib/common.sh
 chmod +x .claude/hooks/*.sh
 ```

@@ -108,6 +108,8 @@ When a teammate starts a new session or after compaction:
 - **PreCompact** → `.claude/hooks/pre-compact.sh` — saves state snapshot before context compaction
 - **SessionStart** → `.claude/hooks/session-start.sh` — injects recovery context on session start/resume
 - **SubagentStop** → `.claude/hooks/subagent-stop.sh` — tracks teammate lifecycle, detects pipeline completion
+- **PermissionRequest** → `.claude/hooks/permission-gate.sh` — auto-approves safe ops (Read/Grep/test), blocks dangerous ops (rm -rf/force-push)
+- **FileChanged** → `.claude/hooks/file-changed.sh` — notifies agents when dependency/config files change
 
 ### Lead Skills
 The Team Lead (you) should use:

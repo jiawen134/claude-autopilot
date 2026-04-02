@@ -68,6 +68,12 @@ fi
 REMAINING=$((PENDING + IN_PROGRESS))
 
 if [ "$REMAINING" -gt 0 ]; then
+    # Check if this teammate already has an in_progress task (prevent double-claiming)
+    if command -v jq &>/dev/null && is_teammate_busy "$TEAMMATE_NAME" "$TEAM_NAME"; then
+        write_teammate_status "$TEAMMATE_NAME" "$ROLE" "busy" "already has in_progress task" "$CURRENT_ROUND" "$MAX_ROUNDS"
+        log_info "[${ROLE}:R${CURRENT_ROUND}] Already has in_progress task. Continuing current work."
+        exit 2
+    fi
     # 有任务 → 重置空闲计数器（含时间戳文件）
     rm -f "${STATE_DIR}/idle-${TEAM_NAME}-${TEAMMATE_NAME}" "${STATE_DIR}/idle-ts-${TEAM_NAME}-${TEAMMATE_NAME}" 2>/dev/null
     write_teammate_status "$TEAMMATE_NAME" "$ROLE" "claiming_task" "${PENDING}p+${IN_PROGRESS}ip" "$CURRENT_ROUND" "$MAX_ROUNDS"
