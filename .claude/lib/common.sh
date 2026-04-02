@@ -595,3 +595,80 @@ write_shutdown_sentinel() {
     date -u +%Y-%m-%dT%H:%M:%SZ > "${STATE_DIR}/shutdown-${team}"
     log_info "Shutdown sentinel written for team: $team"
 }
+
+# ===== State Snapshot (PreCompact hook) =====
+# Saves a full state snapshot to disk before context compaction.
+# Agents can read this file after compaction to recover context.
+# Usage: save_state_snapshot
+
+save_state_snapshot() {
+    [ -n "${STATE_DIR:-}" ] || return 1
+    local snapshot_file="${STATE_DIR}/pre-compact-snapshot.md"
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    {
+        echo "# State Snapshot (${ts})"
+        echo ""
+        echo "## Recent Progress"
+        read_progress 5
+        echo ""
+        echo "## Task Summary"
+        state_summary
+        echo ""
+        echo "## Recent Commits"
+        git log --oneline -5 2>/dev/null || echo "(no git history)"
+        echo ""
+        echo "## Open Discoveries"
+        local disc_count
+        disc_count=$(count_open_discoveries)
+        echo "${disc_count} unresolved issues"
+        echo ""
+        echo "## Teammate Statuses"
+        if compgen -G "$STATE_DIR/status-*.json" > /dev/null 2>&1; then
+            for f in "$STATE_DIR"/status-*.json; do
+                if command -v jq &>/dev/null; then
+                    jq -r '"- \(.teammate // "?") [\(.role // "?")] — \(.action // "?") (R\(.round // 0))"' "$f" 2>/dev/null
+                else
+                    echo "- $(basename "$f" .json)"
+                fi
+            done
+        else
+            echo "(no teammates active)"
+        fi
+    } > "$snapshot_file"
+}
+
+# ===== Recovery Context (SessionStart / PostCompact) =====
+# Generates a recovery instruction string for agents starting or resuming sessions.
+# Usage: ctx=$(generate_recovery_context)
+
+generate_recovery_context() {
+    [ -n "${STATE_DIR:-}" ] || return
+    local ctx=""
+
+    if [ -f "${STATE_DIR}/requirements.md" ]; then
+        ctx="${ctx}[Recovery] Read .claude/state/requirements.md for full requirements context.\n"
+    fi
+    if [ -f "${STATE_DIR}/plan.md" ]; then
+        ctx="${ctx}[Recovery] Read .claude/state/plan.md for architecture and task breakdown.\n"
+    fi
+    if [ -f "${STATE_DIR}/progress.log" ]; then
+        local recent
+        recent=$(tail -3 "${STATE_DIR}/progress.log" 2>/dev/null || echo "")
+        if [ -n "$recent" ]; then
+            ctx="${ctx}[Recovery] Recent progress:\n${recent}\n"
+        fi
+    fi
+    if [ -f "${STATE_DIR}/pre-compact-snapshot.md" ]; then
+        ctx="${ctx}[Recovery] Read .claude/state/pre-compact-snapshot.md for last pre-compaction snapshot.\n"
+    fi
+
+    local summary
+    summary=$(state_summary 2>/dev/null || echo "")
+    [ -n "$summary" ] && ctx="${ctx}[Recovery] Current state: ${summary}\n"
+
+    ctx="${ctx}[Recovery] Run TaskList to see pending/in_progress assignments.\n"
+
+    printf '%b' "$ctx"
+}

@@ -56,10 +56,16 @@ echo "HAS_TESTS: $_HAS_TESTS"
 # 检测 Agent Teams 环境变量
 echo "AGENT_TEAMS: ${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-not_set}"
 
-# 检测已安装的 hooks（三件齐全才算 yes）
+# 检测已安装的 hooks（核心三件 + 新增三件齐全才算 yes）
 _HAS_HOOKS="no"
 if [ -f ".claude/hooks/keep-working.sh" ] && [ -f ".claude/hooks/quality-gate.sh" ] && [ -f ".claude/lib/common.sh" ]; then
     _HAS_HOOKS="yes"
+    # 检查新增的优化 hooks
+    _HAS_NEW_HOOKS="yes"
+    for _h in pre-compact.sh session-start.sh subagent-stop.sh; do
+        [ -f ".claude/hooks/$_h" ] || _HAS_NEW_HOOKS="no"
+    done
+    echo "HAS_NEW_HOOKS: $_HAS_NEW_HOOKS"
 fi
 echo "HAS_HOOKS: $_HAS_HOOKS"
 
@@ -120,7 +126,8 @@ echo "SKILL_DIR: ${_SKILL_DIR:-not_found}"
 ```json
 {
   "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "180000"
   },
   "teammateMode": "tmux",
   "hooks": {
@@ -145,6 +152,39 @@ echo "SKILL_DIR: ${_SKILL_DIR:-not_found}"
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-compact.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/subagent-stop.sh",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }
@@ -165,11 +205,14 @@ echo "SKILL_DIR: ${_SKILL_DIR:-not_found}"
 mkdir -p .claude/hooks .claude/lib
 cp "${SKILL_DIR}/bin/keep-working.sh" .claude/hooks/keep-working.sh
 cp "${SKILL_DIR}/bin/quality-gate.sh" .claude/hooks/quality-gate.sh
+cp "${SKILL_DIR}/bin/pre-compact.sh" .claude/hooks/pre-compact.sh
+cp "${SKILL_DIR}/bin/session-start.sh" .claude/hooks/session-start.sh
+cp "${SKILL_DIR}/bin/subagent-stop.sh" .claude/hooks/subagent-stop.sh
 cp "${SKILL_DIR}/lib/common.sh" .claude/lib/common.sh
-chmod +x .claude/hooks/keep-working.sh .claude/hooks/quality-gate.sh
+chmod +x .claude/hooks/*.sh
 ```
 
-> **关键**：`lib/common.sh` 是两个 Hook 的核心依赖。Hook 通过 `$(dirname "$SCRIPT_DIR")/lib/common.sh` 定位，即 `.claude/lib/common.sh`。缺少此文件会导致 Hook 启动即崩溃。
+> **关键**：`lib/common.sh` 是所有 Hook 的核心依赖。Hook 通过 `$(dirname "$SCRIPT_DIR")/lib/common.sh` 定位，即 `.claude/lib/common.sh`。缺少此文件会导致 Hook 启动即崩溃。
 
 ### 2.3 安装启动脚本
 

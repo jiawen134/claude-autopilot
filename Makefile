@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 SHELLCHECK := $(shell command -v shellcheck 2>/dev/null || echo "$(HOME)/.local/bin/shellcheck")
 # Source scripts (always present). Run 'make sync' first to populate .claude/ copies.
-SCRIPTS := lib/common.sh bin/quality-gate.sh bin/keep-working.sh bin/start-pipeline.sh bin/usage-report.sh bin/dashboard.sh
-SYNCED_SCRIPTS := .claude/lib/common.sh .claude/hooks/keep-working.sh .claude/hooks/quality-gate.sh
+SCRIPTS := lib/common.sh bin/quality-gate.sh bin/keep-working.sh bin/start-pipeline.sh bin/usage-report.sh bin/dashboard.sh bin/pre-compact.sh bin/session-start.sh bin/subagent-stop.sh
+SYNCED_SCRIPTS := .claude/lib/common.sh .claude/hooks/keep-working.sh .claude/hooks/quality-gate.sh .claude/hooks/pre-compact.sh .claude/hooks/session-start.sh .claude/hooks/subagent-stop.sh
 
 .PHONY: help test lint syntax all clean sync
 
@@ -44,6 +44,9 @@ sync: ## Copy bin/ to .claude/hooks/ and lib/ to .claude/lib/
 	@mkdir -p .claude/hooks .claude/lib
 	@cp bin/quality-gate.sh .claude/hooks/quality-gate.sh
 	@cp bin/keep-working.sh .claude/hooks/keep-working.sh
-	@cp lib/common.sh .claude/lib/common.sh  # .claude/lib/ is for when hooks are installed outside the project root; hooks installed in-project source from lib/ directly
+	@cp bin/pre-compact.sh .claude/hooks/pre-compact.sh
+	@cp bin/session-start.sh .claude/hooks/session-start.sh
+	@cp bin/subagent-stop.sh .claude/hooks/subagent-stop.sh
+	@cp lib/common.sh .claude/lib/common.sh
 	@cp bin/dashboard.sh .claude/dashboard.sh
 	@echo "  Synced bin/ -> .claude/hooks/ and lib/ -> .claude/lib/"

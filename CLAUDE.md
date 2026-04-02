@@ -46,6 +46,7 @@
 | `shutdown-{team}` | Graceful shutdown sentinel | Team Lead |
 | `requirements.md` | Complete requirements (survives compaction) | Intake phase |
 | `plan.md` | Architecture + task breakdown | strategist |
+| `pre-compact-snapshot.md` | State snapshot before last compaction | pre-compact.sh |
 
 ### Lifecycle & Communication
 
@@ -104,6 +105,9 @@ When a teammate starts a new session or after compaction:
 ### Hooks
 - **TeammateIdle** → `.claude/hooks/keep-working.sh` — drives continuous work
 - **TaskCompleted** → `.claude/hooks/quality-gate.sh` — validates before marking done
+- **PreCompact** → `.claude/hooks/pre-compact.sh` — saves state snapshot before context compaction
+- **SessionStart** → `.claude/hooks/session-start.sh` — injects recovery context on session start/resume
+- **SubagentStop** → `.claude/hooks/subagent-stop.sh` — tracks teammate lifecycle, detects pipeline completion
 
 ### Lead Skills
 The Team Lead (you) should use:
